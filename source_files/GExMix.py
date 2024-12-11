@@ -1537,6 +1537,7 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
     # Step 3: Get the shared drugs
     shared_drugs = gdsc1_dataset.get_shared_drugs(TCGA_drug_counts, min_num_samples=20)
 
+    num_genes = tcga_clinical_dataset.num_genes
     # Initialize the model collection
     model_collection = GDSCModelCollection(gexmix=None)
     results_collect_df = pd.DataFrame(
@@ -1550,7 +1551,7 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
 
         # Step 4: Get data of this drug for GDSC
         gex_gdsc_x_drug, meta_gdsc_y_drug = gdsc1_dataset.gdsc_extract_data_for_one_drug(
-            drug_name, gex_all, meta_all, drug_identifier_col="Drug Name")
+            drug_name, tcga_clinical_dataset.gex_all, tcga_clinical_dataset.meta_all, drug_identifier_col="Drug Name")
         meta_gdsc_y_drug["binary_response"] = meta_gdsc_y_drug["Z score"].apply(
             lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
         meta_gdsc_y_drug["diagnosis"] = meta_gdsc_y_drug["TCGA Classification"]
@@ -1642,10 +1643,6 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
                 )
         )
         print("ok")
-        # Step 7: Train and evaluate with GDSCModelCollection in 5-fold cross-validation
-        # model_collection.train_and_evaluate(
-        #      drug_name, save_dir=save_dir)
-
     print("Training and evaluation completed.")
 
 
@@ -2942,16 +2939,18 @@ def get_subset_data_given_labels(dataset_class, label_col="diagnosis", subset_to
     return sub_features_df, sub_meta_df
 
 
-def initialize_datasets(config, filename_dict):
-    def initialize_dataset(dataset_name, filename_dict, dataset_type, verbose=True):
+def initialize_datasets(config, filename_dict, save_dir="./"):
+    def initialize_dataset(dataset_name, filename_dict, dataset_type, save_dir="./", verbose=True):
         """
-        Helper function to initialize a GExDataset, load its metadata, and load its gene expression data.
+        Helper function to initialize a GExDataset, load its metadata, and load its gene
+        expression data.
         """
         dataset = GExDataset(
                 filename_dict[dataset_name]["filename"],
                 filename_dict[dataset_name]["meta_filename"],
                 dataset_type,
-                verbose=verbose
+                verbose=verbose,
+                save_dir=save_dir
         )
         dataset.load_gex_data()
         dataset.load_meta_data()
@@ -2968,7 +2967,7 @@ def initialize_datasets(config, filename_dict):
     datasets = {}
     for name, options in config.items():
         if options["enabled"]:
-            dataset = initialize_dataset(name, filename_dict, name)
+            dataset = initialize_dataset(name, filename_dict, name, save_dir=save_dir)
             datasets[name] = dataset
     return datasets
 
@@ -3033,7 +3032,7 @@ if __name__ == "__main__":
     }
 
     # Initialize datasets
-    datasets = initialize_datasets(dataset_config, filename_dict)
+    datasets = initialize_datasets(dataset_config, filename_dict, save_dir=save_dir)
 
     # Apply GExMix based on configuration
     mix_objects = {}
