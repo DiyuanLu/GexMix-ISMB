@@ -608,14 +608,16 @@ def train_and_evaluate_model(model_name, X_train, X_test, y_train, y_test, num_e
 
     return history, model
 
-def prepare_train_test_data(class_count_str, X_train, y_train, tcga_X_test, tcga_y_test):
-    if class_count_str == "GDSC -> TCGA":
-        used_tcga_X_test = tcga_X_test.copy()
-        used_val_tcga_y = tcga_y_test.copy()
-    elif class_count_str == "GDSC+TCGA -> TCGA":
-        train_tcga_y, val_tcga_y = train_test_split(tcga_y_test, test_size=0.2, random_state=89)
-        train_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
-        val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
+def prepare_train_test_data(X_train, y_train, tcga_X, tcga_y, train_set_name="GDSC",
+                            test_set_name="TCGA"):
+    if train_set_name == "GDSC" and test_set_name == "TCGA":
+
+        used_tcga_X_test = tcga_X.copy()
+        used_val_tcga_y = tcga_y.copy()
+    elif train_set_name == "GDSC+TCGA" and test_set_name == "TCGA":
+        train_tcga_y, val_tcga_y = train_test_split(tcga_y, test_size=0.2, random_state=89)
+        train_tcga_x = tcga_X[tcga_y["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
+        val_tcga_x = tcga_X[tcga_y["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
 
         X_train = pd.concat([X_train, train_tcga_x], axis=0)
         y_train = pd.concat([y_train, train_tcga_y], axis=0)
@@ -623,9 +625,9 @@ def prepare_train_test_data(class_count_str, X_train, y_train, tcga_X_test, tcga
         used_tcga_X_test = val_tcga_x
         used_val_tcga_y = val_tcga_y
     elif class_count_str == "TCGA -> TCGA":
-        train_tcga_y, val_tcga_y = train_test_split(tcga_y_test, test_size=0.2, random_state=89)
-        train_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
-        val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
+        train_tcga_y, val_tcga_y = train_test_split(tcga_y, test_size=0.2, random_state=89)
+        train_tcga_x = tcga_X[tcga_y["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
+        val_tcga_x = tcga_X[tcga_y["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
 
         X_train = train_tcga_x.copy()
         y_train = train_tcga_y.copy()
@@ -681,7 +683,8 @@ def make_classifiers(tcga_mix: GExMix,
             y_train, y_val = train_val_y.iloc[train_index], train_val_y.iloc[val_index]
 
             X_train, y_train, used_tcga_X_test, used_val_tcga_y = prepare_train_test_data(
-                class_count_str, X_train, y_train, tcga_X_test, tcga_y_test)
+                X_train, y_train, tcga_X_test, tcga_y_test, train_set_name="GDSC",
+                test_set_name="TCGA")
             # if class_count_str == "GDSC -> TCGA":
             #     # combined_train_x = train_gdsc_x
             #     # combined_train_y = train_gdsc_y
