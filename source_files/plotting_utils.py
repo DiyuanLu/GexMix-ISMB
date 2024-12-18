@@ -3,11 +3,70 @@ import textwrap
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+import matplotlib.colors as mcolors
 from os import path, makedirs
 import pylab
 from textwrap import wrap
 
+
+
+# Define the cancer colors
+def retrieve_defined_cancer_colors():
+    cancer_colors_dict = {
+            'ACC': [0.5028969069083832, 0.8021815519079287, 0.8085326771152083],
+            'ALL': [0.8256758179018465, 0.12240009603012847, 0.14908782291049066],
+            'AML': [0.18461117558203183, 0.9475440410799305, 0.17214014038311073],
+            'ATL': [0.2610598813644118, 0.13926400850892098, 0.6153560729858683],
+            'ATRT': [0.9162672115979762, 0.27461670755930434, 0.8084549973564602],
+            'BLCA': [0.5346243124602726, 0.5070989720014308, 0.3099454832959022],
+            'BRCA': [0.9142624581536238, 0.8781007999105886, 0.3711829226421237],
+            'CESC': [0.12535989955658253, 0.2611039729388933, 0.21901161195937513],
+            'CHOL': [0.11490587735585274, 0.4931806926986122, 0.9232206790468206],
+            'CLL': [0.29498894963706723, 0.661624639363765, 0.557675881136888],
+            'COAD': [0.9491873262234066, 0.7460190089556826, 0.9279228626040336],
+            'READ': [0.49535022028884557, 0.15953572904945615, 0.8785782300058026],
+            'COREAD': [0.9491873262234066, 0.7460190089556826, 0.9279228626040336],
+            'DLBC': [0.66253516480383, 0.832343435583801, 0.1365078197277426],
+            'ESCA': [0.6437950915591677, 0.3949309246005306, 0.6257070560387572],
+            'GBM': [0.5968600828236591, 0.5400053312087331, 0.9291057481075607],
+            'HNSC': [0.15890209903886174, 0.9469967444199937, 0.8765400221023822],
+            'KICH': [0.828450559853671, 0.5824751334500748, 0.5143399972390572],
+            'KIRC': [0.8616713894471282, 0.5274357500265996, 0.1595189858240449],
+            'KIRP': [0.40871345562529915, 0.12394383053617261, 0.29711665064788156],
+            'LAML': [0.15538408556420602, 0.5598590389110063, 0.33588551847305714],
+            'LCML': [0.6316394216628792, 0.946392947332844, 0.5249790015516205],
+            'LGG': [0.39295882349512556, 0.8750395072573677, 0.34929172804254766],
+            'LIHC': [0.9384031805214601, 0.33661938351682574, 0.3952618560345247],
+            'LUAD': [0.8183718802631594, 0.8576153930435166, 0.7192725120125315],
+            'LUSC': [0.6391186929682119, 0.11289097583285332, 0.4710619409825987],
+            'MB': [0.6370390300065036, 0.2871690005900849, 0.2475369529159993],
+            'MESO': [0.3814025736875908, 0.6690605046377432, 0.13544027615958698],
+            'MM': [0.32946177517653696, 0.6895586213063813, 0.9408324671455264],
+            'NB': [0.1994626312071437, 0.37725458592243977, 0.7304011051489422],
+            'NSCLC': [0.4614761031911624, 0.25609675948439925, 0.5294851898751254],
+            'OV': [0.10297276789130962, 0.8606485836875045, 0.47458202480367706],
+            'PAAD': [0.4335211656638416, 0.535259708278955, 0.7194786528592612],
+            'PCPG': [0.3218797243372141, 0.9297177719832997, 0.6391630315609553],
+            'PRAD': [0.7052668859721214, 0.6316276529066928, 0.759075938209962],
+            'SARC': [0.7772659104816602, 0.10769584322350556, 0.8951945538753189],
+            'SCLC': [0.9357866915464881, 0.7541668386668626, 0.5774676438136844],
+            'SKCM': [0.30841847672122236, 0.28711691609288903, 0.9155273945101712],
+            'STAD': [0.6614607126251004, 0.9438667107828322, 0.8835839815564949],
+            'TGCT': [0.15532064480592406, 0.7090677851258651, 0.7347965943864195],
+            'THCA': [0.10901012830142896, 0.1703150965088594, 0.8236928523986358],
+            'THYM': [0.4070193085304865, 0.33347803415176835, 0.13506509502595435],
+            'UCEC': [0.3810642751651787, 0.41180021117929355, 0.42234676890053313],
+            'UCS': [0.2304222123772625, 0.4673187345414047, 0.1236959778910205],
+            'UVM': [0.6216312365820766, 0.750354522325845, 0.3371703664353125],
+            'nan': [0.8983045922357242, 0.5133895518491356, 0.6927779941703637],
+            'None': [0.8983045922357242, 0.5133895518491356, 0.6927779941703637],
+            'UNCLASSIFIED': [0.11208716148911235, 0.20817176938970405, 0.5070137030476141],
+            'UNABLE TO CLASSIFY': [0.11208716148911235, 0.20817176938970405, 0.5070137030476141],
+            '0.0': [0.8219878222602934, 0.21392247955722704, 0.5731005913865741],
+    }
+    # generated_colors = generate_dark_colors(len(cancer_colors_dict.keys()), dark_factor=0.85)
+    # cancer_colors_dict = {key: generated_colors[jj] for jj, key in enumerate(cancer_colors_dict.keys())}
+    return cancer_colors_dict
 
 class Struct:
     def __init__(self, **entries):
@@ -97,73 +156,73 @@ def encode_labels(df, column_name):
     encoder = LabelEncoder()
     encoded_labels = encoder.fit_transform(df[column_name])
     return encoded_labels, encoder.classes_
-
-def visualize_data_with_meta(features, meta_data_df, meta2check=[], cmap="viridis", n_cols=None,
-                             n_rows=None,
-                             postfix="STAD", figsize=[8, 6], save_dir="./", vis_mode="phate"):
-
-
-    def is_df_column_string(df, column_name):
-        col_datatype = df[column_name].dropna().dtypes
-        return col_datatype == str or col_datatype == np.object_
-
-    projection = get_reduced_dimension_projection(
-        features, vis_mode=vis_mode,
-        n_components=2,
-        n_neighbors=30)
-
-    if not n_cols:
-        n_cols = np.int32(np.ceil(np.sqrt(len(meta2check))))
-        n_rows = np.int32(np.ceil(len(meta2check) / n_cols))
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-    # Flatten the axes if it's not already a 1D array (in the case of a single plot)
-    if n_rows * n_cols == 1:
-        axes = [axes]  # Convert single axis to a list to be consistent with axes.flatten()
-    else:
-        axes = axes.flatten()
-    plt.suptitle(postfix)
-    for i, col in enumerate(meta2check):
-        ax = axes[i]
-
-        if is_df_column_string(meta_data_df, col):
-            # Encode labels for string columns
-            encoded_labels, classes = encode_labels(meta_data_df, col)
-            color_labels = encoded_labels
-            non_nan_classes = [ele for jj, ele in enumerate(classes) if str(ele) != "nan"]
-        else:
-            # Use the column values directly for numeric columns
-            color_labels = meta_data_df[col].values
-            non_nan_classes = np.unique(color_labels[~np.isnan(color_labels)])
-
-        non_nan_inds = np.where(meta_data_df[col].values.astype(str) != "nan")[0]
-
-        # Plot all points in gray
-        ax.scatter(projection[:, 0], projection[:, 1], color="gray", alpha=0.65, s=5)
-
-        # Plot non-NaN points with color
-        sc = ax.scatter(
-                projection[non_nan_inds, 0], projection[non_nan_inds, 1],
-                c=color_labels[non_nan_inds], s=5, cmap=cmap)
-        ax.set_title(textwrap.fill(str(col), width=30), fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-        # Add colorbar to the current axes
-        cbar = fig.colorbar(sc, ax=ax)
-
-        # Set the ticks and labels for the colorbar
-        if is_df_column_string(meta_data_df, col):
-            cbar.set_ticks(np.arange(len(non_nan_classes)))
-            wrapped_labels = [textwrap.fill(str(label), width=25) for label in non_nan_classes]
-            cbar.set_ticklabels(wrapped_labels, fontsize=8)
-
-    # Adjust layout for better fit
-    plt.tight_layout()
-    plt.savefig(path.join(save_dir, f"vis_meta_{postfix}.png"))
-    plt.close()
-
-    return projection
+#
+# def visualize_data_with_meta(features, meta_data_df, meta2check=[], cmap="viridis", n_cols=None,
+#                              n_rows=None,
+#                              postfix="STAD", figsize=[8, 6], save_dir="./", vis_mode="phate"):
+#
+#
+#     def is_df_column_string(df, column_name):
+#         col_datatype = df[column_name].dropna().dtypes
+#         return col_datatype == str or col_datatype == np.object_
+#
+#     projection = get_reduced_dimension_projection(
+#         features, vis_mode=vis_mode,
+#         n_components=2,
+#         n_neighbors=30)
+#
+#     if not n_cols:
+#         n_cols = np.int32(np.ceil(np.sqrt(len(meta2check))))
+#         n_rows = np.int32(np.ceil(len(meta2check) / n_cols))
+#
+#     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+#     # Flatten the axes if it's not already a 1D array (in the case of a single plot)
+#     if n_rows * n_cols == 1:
+#         axes = [axes]  # Convert single axis to a list to be consistent with axes.flatten()
+#     else:
+#         axes = axes.flatten()
+#     plt.suptitle(postfix)
+#     for i, col in enumerate(meta2check):
+#         ax = axes[i]
+#
+#         if is_df_column_string(meta_data_df, col):
+#             # Encode labels for string columns
+#             encoded_labels, classes = encode_labels(meta_data_df, col)
+#             color_labels = encoded_labels
+#             non_nan_classes = [ele for jj, ele in enumerate(classes) if str(ele) != "nan"]
+#         else:
+#             # Use the column values directly for numeric columns
+#             color_labels = meta_data_df[col].values
+#             non_nan_classes = np.unique(color_labels[~np.isnan(color_labels)])
+#
+#         non_nan_inds = np.where(meta_data_df[col].values.astype(str) != "nan")[0]
+#
+#         # Plot all points in gray
+#         ax.scatter(projection[:, 0], projection[:, 1], color="gray", alpha=0.65, s=5)
+#
+#         # Plot non-NaN points with color
+#         sc = ax.scatter(
+#                 projection[non_nan_inds, 0], projection[non_nan_inds, 1],
+#                 c=color_labels[non_nan_inds], s=5, cmap=cmap)
+#         ax.set_title(textwrap.fill(str(col), width=30), fontsize=9)
+#         ax.set_xticks([])
+#         ax.set_yticks([])
+#
+#         # Add colorbar to the current axes
+#         cbar = fig.colorbar(sc, ax=ax)
+#
+#         # Set the ticks and labels for the colorbar
+#         if is_df_column_string(meta_data_df, col):
+#             cbar.set_ticks(np.arange(len(non_nan_classes)))
+#             wrapped_labels = [textwrap.fill(str(label), width=25) for label in non_nan_classes]
+#             cbar.set_ticklabels(wrapped_labels, fontsize=8)
+#
+#     # Adjust layout for better fit
+#     plt.tight_layout()
+#     plt.savefig(path.join(save_dir, f"vis_meta_{postfix}.png"))
+#     plt.close()
+#
+#     return projection
 
 
 def generate_pastel_colors(num_colors):
@@ -193,6 +252,38 @@ def generate_pastel_colors(num_colors):
         colors.append(new_color)
 
     return colors
+
+def generate_dark_colors(num_colors, dark_factor=0.5):
+    import random
+
+    def get_random_color(dark_factor=0.5, min_value=0.1):
+        # Generate RGB values that are scaled to create dark but not completely black tones
+        return [min_value + (x * dark_factor) for x in [random.uniform(0, 1.0) for _ in range(3)]]
+
+    def color_distance(c1, c2):
+        # Calculate the Manhattan distance between two colors
+        return sum([abs(x[0] - x[1]) for x in zip(c1, c2)])
+
+    def generate_new_color(existing_colors, dark_factor=0.5, min_value=0.1):
+        max_distance = None
+        best_color = None
+        for _ in range(100):  # Try 100 times to find a suitable color
+            color = get_random_color(dark_factor=dark_factor, min_value=min_value)
+            if not existing_colors:
+                return color
+            best_distance = min([color_distance(color, c) for c in existing_colors])
+            if not max_distance or best_distance > max_distance:
+                max_distance = best_distance
+                best_color = color
+        return best_color
+
+    colors = []
+    for _ in range(num_colors):
+        new_color = generate_new_color(colors, dark_factor=dark_factor, min_value=0.1)
+        colors.append(new_color)
+
+    return colors
+
 
 """Bokeh related plotting functions start"""
 # 2024.05.31
@@ -1194,12 +1285,9 @@ def update_sub_data_dict(data_dict, features, needed_inds, if_indiv_proj=False):
     return sub_data_dict
 
 """Bokeh fuctions finished"""
-
-
-def visualize_data_with_meta(features, meta_data_df, meta2check=[], cmap="viridis", n_cols=None,
-                             n_rows=None,
+def visualize_data_with_meta(features, meta_data_df, meta2check=[], if_color_gradient=[True, False],
+                             n_rows=None, cmap="viridis", n_cols=None,
                              postfix="STAD", figsize=[8, 6], save_dir="./", vis_mode="phate"):
-
 
     def is_df_column_string(df, column_name):
         col_datatype = df[column_name].dropna().dtypes
@@ -1214,16 +1302,16 @@ def visualize_data_with_meta(features, meta_data_df, meta2check=[], cmap="viridi
         n_cols = np.int32(np.ceil(np.sqrt(len(meta2check))))
         n_rows = np.int32(np.ceil(len(meta2check) / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=[max(10, 5 * len(meta2check)), 6])
     # Flatten the axes if it's not already a 1D array (in the case of a single plot)
     if n_rows * n_cols == 1:
         axes = [axes]  # Convert single axis to a list to be consistent with axes.flatten()
     else:
         axes = axes.flatten()
     plt.suptitle(postfix)
-    for i, col in enumerate(meta2check):
+    for i, col, if_gradient in zip(
+            np.arange(len(meta2check)), meta2check, if_color_gradient):
         ax = axes[i]
-
         if is_df_column_string(meta_data_df, col):
             # Encode labels for string columns
             encoded_labels, classes = encode_labels(meta_data_df, col)
@@ -1233,32 +1321,42 @@ def visualize_data_with_meta(features, meta_data_df, meta2check=[], cmap="viridi
             # Use the column values directly for numeric columns
             color_labels = meta_data_df[col].values
             non_nan_classes = np.unique(color_labels[~np.isnan(color_labels)])
-
         non_nan_inds = np.where(meta_data_df[col].values.astype(str) != "nan")[0]
+        # Choose colormap: Discrete or Gradient
+        if if_gradient and len(non_nan_classes) < 50:
+
+            class_to_color_dict = retrieve_defined_cancer_colors()
+            # Find unique classes in the figure
+            filtered_class_to_index = {cls: i for i, cls in enumerate(non_nan_classes)}
+            filtered_colors = [class_to_color_dict[cls] for cls in non_nan_classes]
+            discrete_cmap = mcolors.ListedColormap(filtered_colors)
+            # Map class names to numeric indices for plotting
+            color_indices = [filtered_class_to_index.get(cls, -1) for cls in meta_data_df[col]]
+
+        else:
+            discrete_cmap = cmap
+            color_indices = meta_data_df[col]
 
         # Plot all points in gray
         ax.scatter(projection[:, 0], projection[:, 1], color="gray", alpha=0.65, s=5)
-
         # Plot non-NaN points with color
         sc = ax.scatter(
                 projection[non_nan_inds, 0], projection[non_nan_inds, 1],
-                c=color_labels[non_nan_inds], s=5, cmap=cmap)
+                c=color_indices, cmap=discrete_cmap, s=5)
         ax.set_title(textwrap.fill(str(col), width=30), fontsize=9)
         ax.set_xticks([])
         ax.set_yticks([])
-
         # Add colorbar to the current axes
         cbar = fig.colorbar(sc, ax=ax)
-
         # Set the ticks and labels for the colorbar
-        if is_df_column_string(meta_data_df, col):
-            cbar.set_ticks(np.arange(len(non_nan_classes)))
+        if is_df_column_string(meta_data_df, col) and if_gradient:
             wrapped_labels = [textwrap.fill(str(label), width=25) for label in non_nan_classes]
+            cbar.set_ticks(np.arange(len(non_nan_classes)))
             cbar.set_ticklabels(wrapped_labels, fontsize=8)
-
     # Adjust layout for better fit
     plt.tight_layout()
-    plt.savefig(path.join(save_dir, f"vis_meta_{postfix}.png"))
+    plt.savefig(path.join(save_dir, f"vis_meta_{postfix}.png"), transparent=True)
+    plt.savefig(path.join(save_dir, f"vis_meta_{postfix}.pdf"), format="pdf")
     plt.close()
 
     return projection

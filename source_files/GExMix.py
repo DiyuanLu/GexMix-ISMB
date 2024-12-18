@@ -1,5 +1,5 @@
-# import matplotlib
-# matplotlib.use('Agg')  # do not show plots while running code. Use "TKAgg" if you want to see figure right away
+import matplotlib
+matplotlib.use('Agg')  # do not show plots while running code. Use "TKAgg" if you want to see figure right away
 import sys
 import pickle
 import numpy as np
@@ -308,8 +308,8 @@ def encode_labels(df, column_name):
     return encoded_labels, encoder.classes_v
 
 ## 2024.11.18
-def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, overall_results_df,
-                           num_epochs=10, run=0, drug="drug", y_target_col="binary_response",
+def train_evaluate_and_log(model_name, X_train, X_val, y_train_df, tcga_y_test_df, overall_results_df,
+                           tcga_X_test=None, y_val_df=None, num_epochs=10, run=0, drug="drug", y_target_col="binary_response",
                            original_or_augment="augment", save_dir="./", aug_by_col="aug_by_col",
                            run_postfix="run_postfix", title_suffix="",
                            regress_or_classify="regress"):
@@ -321,15 +321,15 @@ def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, o
     elif isinstance(y_train_df, np.ndarray):
         y_train_values = y_train_df
         X_train_values = X_train
-    if isinstance(y_test_df, pd.DataFrame):
-        y_test_values = y_test_df[~y_test_df[y_target_col].isna()][y_target_col]
-        X_test_values = X_test[~y_test_df[y_target_col].isna()]
-    elif isinstance(y_test_df, np.ndarray):
-        y_test_values = y_test_df
-        X_test_values = X_test
+    if isinstance(y_val_df, pd.DataFrame):
+        y_val_values = y_val_df[~y_val_df[y_target_col].isna()][y_target_col]
+        X_val_values = X_val[~y_val_df[y_target_col].isna()]
+    elif isinstance(y_val_df, np.ndarray):
+        y_val_values = y_val_df
+        X_val_values = X_val
     # Train the model
     history, model = train_and_evaluate_model(
-            model_name, X_train_values, X_test_values, y_train_values, y_test_values,
+            model_name, X_train_values, X_val_values, y_train_values, y_val_values,
             num_epochs, regress_or_classify=regress_or_classify
     )
 
@@ -341,7 +341,26 @@ def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, o
         )
 
     # Evaluate the model
-    y_pred, accuracy = evaluate_model(model, X_test, y_test_df[y_target_col].values)
+    if tcga_X_test is not None:
+        y_pred, accuracy = evaluate_model(model, tcga_X_test, tcga_y_test_df[y_target_col].values)
+        y_pred = y_pred.flatten()
+        y_df = pd.DataFrame(tcga_y_test_df[y_target_col].values, columns=["ground_truth"])
+        y_pred_df = pd.DataFrame(y_pred, columns=["prediction"])
+        y_df.index = y_pred_df.index
+        gt_predict_df = pd.concat([y_df, y_pred_df], axis=1)
+
+        return_test_coll_results = pd.concat([gt_predict_df, tcga_y_test_df], axis=1)
+
+    else:
+        y_pred, accuracy = evaluate_model(model, X_val, y_val_df[y_target_col].values)
+        ground_truth = y_val_df[y_target_col].values
+
+        y_pred = y_pred.flatten()
+        y_df = pd.DataFrame(y_val_df[y_target_col].values, columns=["ground_truth"])
+        y_pred_df = pd.DataFrame(y_pred, columns=["prediction"])
+        y_df.index = y_pred_df.index
+        gt_predict_df = pd.concat([y_df, y_pred_df], axis=1)
+        return_test_coll_results = pd.concat([gt_predict_df, y_val_df], axis=1)
 
     # Append results to DataFrame
     overall_results_df = pd.concat(
@@ -362,19 +381,18 @@ def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, o
     )
     # Plot prediction vs ground truth
     plot_prediction_gt_scatter(
-        y_pred, y_test_df, y_target_col=y_target_col, postfix=f"{model_name} {original_or_augment}_{run_postfix}",
+        y_pred, tcga_y_test_df, y_target_col=y_target_col, postfix=f"{model_name} {original_or_augment}_{run_postfix}",
         title=f"Test set Accuracy: {accuracy:.2f} ({model_name} {original_or_augment}) {title_suffix}",
         save_dir=save_dir
     )
 
     ## plot prediction grouped by diagnosis in a boxplot
-    # if y_pred.shape[0] > 1:
-    #     y_pred = y_pred[:, 0]
     y_pred = y_pred.flatten()
-    y_df = pd.DataFrame(y_test_df[y_target_col].values, columns=["ground_truth"])
+    y_df = pd.DataFrame(tcga_y_test_df[y_target_col].values, columns=["ground_truth"])
     y_pred_df = pd.DataFrame(y_pred, columns=["prediction"])
     y_df.index = y_pred_df.index
     gt_predict_df = pd.concat([y_df, y_pred_df], axis=1)
+
     if len(gt_predict_df["ground_truth"]) >= 2:
         # Filter for rows with non-NaN values in both columns
         filtered_df = gt_predict_df.dropna(subset=["ground_truth", "prediction"])
@@ -394,7 +412,7 @@ def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, o
         corr_str = f"Pearson r: {pearsonr_corr:.2f}\nSpearman r: {sp_corr:.2f}\nR2:{r2:.2f}"
 
         plot_violin_grouped_by_metric(
-            data_df=pd.concat([y_test_df, gt_predict_df], axis=1),
+            data_df=pd.concat([tcga_y_test_df, gt_predict_df], axis=1),
             group_by_col="diagnosis",
             metric1_col="ground_truth",
             metric2_col="prediction",
@@ -406,7 +424,7 @@ def train_evaluate_and_log(model_name, X_train, X_test, y_train_df, y_test_df, o
             plot_mode="violin"
         )
 
-    return overall_results_df
+    return overall_results_df, return_test_coll_results
 
 
 def load_saved_drug_response_get_visualization():
@@ -590,15 +608,42 @@ def train_and_evaluate_model(model_name, X_train, X_test, y_train, y_test, num_e
 
     return history, model
 
+def prepare_train_test_data(class_count_str, X_train, y_train, tcga_X_test, tcga_y_test):
+    if class_count_str == "GDSC -> TCGA":
+        used_tcga_X_test = tcga_X_test.copy()
+        used_val_tcga_y = tcga_y_test.copy()
+    elif class_count_str == "GDSC+TCGA -> TCGA":
+        train_tcga_y, val_tcga_y = train_test_split(tcga_y_test, test_size=0.2, random_state=89)
+        train_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
+        val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
+
+        X_train = pd.concat([X_train, train_tcga_x], axis=0)
+        y_train = pd.concat([y_train, train_tcga_y], axis=0)
+
+        used_tcga_X_test = val_tcga_x
+        used_val_tcga_y = val_tcga_y
+    elif class_count_str == "TCGA -> TCGA":
+        train_tcga_y, val_tcga_y = train_test_split(tcga_y_test, test_size=0.2, random_state=89)
+        train_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])]
+        val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(val_tcga_y["short_sample_id"])]
+
+        X_train = train_tcga_x.copy()
+        y_train = train_tcga_y.copy()
+
+        used_tcga_X_test = val_tcga_x
+        used_val_tcga_y = val_tcga_y
+
+    return X_train, y_train, used_tcga_X_test, used_val_tcga_y
 
 def make_classifiers(tcga_mix: GExMix,
-                     X_train: pd.DataFrame,
-                     y_train,
-                     X_test: pd.DataFrame,
-                     y_test,
+                     train_val_x: pd.DataFrame,
+                     train_val_y,
                      class_count_str: str,
                      overall_results_df: pd.DataFrame,
                      epochs: int,
+                     runs: int,
+                     tcga_X_test=None,
+                     tcga_y_test=None,
                      y_target_col="binary_response",
                      postfix=".", drug="5fu",
                      regress_or_classify="classification", save_dir="./", aug_by_col="binary_response"):
@@ -606,8 +651,8 @@ def make_classifiers(tcga_mix: GExMix,
     Given gene expression data x and meta data y, with label column, do classification
     :param X_train: pd.Dataframe
     :param y_train: dict
-    :param X_test: pd.Dataframe
-    :param y_test: np.array
+    :param tcga_X_test: pd.Dataframe
+    :param tcga_y_test: np.array
     :param class_count_str:
     :param label_col:
     :param epochs:
@@ -616,69 +661,202 @@ def make_classifiers(tcga_mix: GExMix,
     :param save_dir:
     :return:
     """
-
+    from sklearn.model_selection import KFold
     # Train the model
     num_round = 3  # number of training iterations
+    n_splits = 5
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    model_name = "FNN"
     # Resample the training set to handle the imbalance
     # ros = SMOTE(random_state=42)
     # X_resampled, y_resampled = ros.fit_resample(X_train, y_train)
+    # Initialize an empty list to store results from all folds
+    allCV_results = []
 
-    epsilon = 0.8
     aug_by_col = "binary_response"
-
-    # Main loop
-    for run in range(num_round):
+    for run in range(runs):
         run_postfix = f"run{run}-{postfix}"
-        # Loop over each model in the list
-        for model_name in ["FNN", "linearregression"]:  #, "linearregression", "tweedieregressor"
+        for fold_idx, (train_index, val_index) in enumerate(kf.split(train_val_x)):
+            X_train, X_val = train_val_x.iloc[train_index], train_val_x.iloc[val_index]
+            y_train, y_val = train_val_y.iloc[train_index], train_val_y.iloc[val_index]
+
+            X_train, y_train, used_tcga_X_test, used_val_tcga_y = prepare_train_test_data(
+                class_count_str, X_train, y_train, tcga_X_test, tcga_y_test)
+            # if class_count_str == "GDSC -> TCGA":
+            #     # combined_train_x = train_gdsc_x
+            #     # combined_train_y = train_gdsc_y
+            #
+            #     used_tcga_X_test = tcga_X_test.copy()
+            #     used_val_tcga_y = tcga_y_test.copy()
+            # elif class_count_str == "GDSC+TCGA -> TCGA":
+            #     train_tcga_y, val_tcga_y = train_test_split(
+            #             tcga_y_test, test_size=0.2, random_state=89)
+            #     # get matching gex from gex_clinical_from_tcga
+            #     train_tcga_x = tcga_X_test[
+            #         tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])
+            #     ]
+            #     val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(
+            #             used_val_tcga_y["short_sample_id"])]
+            #
+            #     X_train = pd.concat([X_train, train_tcga_x], axis=0)
+            #     y_train = pd.concat([y_train, train_tcga_y], axis=0)
+            #
+            #     used_tcga_X_test = val_tcga_x
+            #     used_val_tcga_y = val_tcga_y
+            # elif class_count_str == "TCGA -> TCGA":
+            #     train_tcga_y, val_tcga_y = train_test_split(
+            #             tcga_y_test, test_size=0.2, random_state=89)
+            #     # get matching gex from gex_clinical_from_tcga
+            #     train_tcga_x = tcga_X_test[
+            #         tcga_y_test["short_sample_id"].isin(train_tcga_y["short_sample_id"])
+            #     ]
+            #     val_tcga_x = tcga_X_test[tcga_y_test["short_sample_id"].isin(
+            #             val_tcga_y["short_sample_id"])]
+            #
+            #     X_train = train_tcga_x.copy()  ## overwrite gdsc trianing data with TCGA training data
+            #     y_train = train_tcga_y.copy()
+            #
+            #     used_tcga_X_test = val_tcga_x
+            #     used_val_tcga_y = val_tcga_y
+
+            # for model_name in ["FNN", "linearregression"]:
             print(f"{model_name}: {run_postfix} original")
-            # Train and evaluate the original model
-            overall_results_df = train_evaluate_and_log(
-                    model_name=model_name,
-                    X_train=X_train.values,
-                    X_test=X_test.values,
-                    y_train_df=y_train,
-                    y_test_df=y_test,
-                    num_epochs=epochs,
-                    run=run,
-                    drug=drug,
-                    original_or_augment="original",
-                    y_target_col=y_target_col,
-                    aug_by_col=aug_by_col,
-                    save_dir=save_dir,
-                    run_postfix=run_postfix,
-                    overall_results_df=overall_results_df,
-                    title_suffix=f"\n{class_count_str}",
-                    regress_or_classify=regress_or_classify
+            overall_results_df, return_test_coll_results = train_evaluate_and_log(
+                model_name=model_name,
+                X_train=X_train.values,
+                X_val=X_val.values,
+                y_train_df=y_train,
+                y_val_df=y_val,
+                tcga_X_test=used_tcga_X_test.values,
+                tcga_y_test_df=pd.DataFrame(used_val_tcga_y),
+                num_epochs=epochs,
+                run=run,
+                drug=drug,
+                original_or_augment="original",
+                y_target_col=y_target_col,
+                aug_by_col=aug_by_col,
+                save_dir=save_dir,
+                run_postfix=run_postfix,
+                overall_results_df=overall_results_df,
+                title_suffix=f"\n{class_count_str}",
+                regress_or_classify=regress_or_classify
             )
 
-            # Train and evaluate the augmented model
+            # Create a DataFrame to store fold results
+            temp_results = pd.DataFrame(
+                    {
+                            "Drug": [drug] * len(return_test_coll_results),
+                            "ori_or_aug": ["ori"] * len(return_test_coll_results),
+                            "Run": [run] * len(return_test_coll_results),
+                            "Fold": [fold_idx] * len(return_test_coll_results)
+                    })
+
+            # Concatenate with additional meta data
+            fold_drug_results = pd.concat(
+                    [temp_results, y_val.reset_index(drop=True)], axis=1)
+
+            # Append fold results to the list
+            allCV_results.append(fold_drug_results)
+
             tcga_mix.num2aug = 200
             aug_gex, aug_label_dict = tcga_mix.augment_random(
-                    aug_by_col, target_features=X_train.values,
-                    target_label_dict=y_train.reset_index(),
-                    keys4mix=["binary_response", "diagnosis"],
-                    if_include_original=True, save_dir=save_dir
+                aug_by_col, target_features=X_train.values,
+                target_label_dict=y_train.reset_index(drop=True),
+                keys4mix=["binary_response", "diagnosis"],
+                if_include_original=True, save_dir=save_dir
             )
             print(f"{model_name}: {run_postfix} augment")
-            overall_results_df = train_evaluate_and_log(
-                    model_name=model_name,
-                    X_train=aug_gex,
-                    y_train_df=pd.DataFrame(aug_label_dict),
-                    X_test=X_test.values,
-                    y_test_df=pd.DataFrame(y_test),
-                    num_epochs=epochs,
-                    run=run,
-                    drug=drug,
-                    original_or_augment="augment",
-                    y_target_col=y_target_col,
-                    save_dir=save_dir,
-                    title_suffix=f"\n{class_count_str}",
-                    run_postfix=run_postfix+f"-augby-{aug_by_col[0:5]}{tcga_mix.num2aug}",
-                    overall_results_df=overall_results_df,
-                    regress_or_classify=regress_or_classify
+            overall_results_df, return_test_coll_results = train_evaluate_and_log(
+                model_name=model_name,
+                X_train=aug_gex,
+                y_train_df=pd.DataFrame(aug_label_dict),
+                X_val=X_val.values,
+                y_val_df=y_val,
+                tcga_X_test=used_tcga_X_test.values,
+                tcga_y_test_df=pd.DataFrame(used_val_tcga_y),
+                num_epochs=epochs,
+                run=run,
+                drug=drug,
+                original_or_augment="augment",
+                y_target_col=y_target_col,
+                save_dir=save_dir,
+                title_suffix=f"\n{class_count_str}",
+                run_postfix=run_postfix+f"-augby-{aug_by_col[0:5]}{tcga_mix.num2aug}",
+                overall_results_df=overall_results_df,
+                regress_or_classify=regress_or_classify
             )
-    return overall_results_df
+
+            # Create a DataFrame to store fold results
+            temp_results = pd.DataFrame(
+                    {
+                            "Drug": [drug] * len(return_test_coll_results),
+                            "ori_or_aug": ["aug"] * len(return_test_coll_results),
+                            "Run":  [run] * len(return_test_coll_results),
+                            "Fold": [fold_idx] * len(return_test_coll_results)
+                    })
+
+            # Concatenate with additional meta data
+            fold_drug_results = pd.concat(
+                    [temp_results, y_val.reset_index(drop=True)], axis=1)
+
+            # Append fold results to the list
+            allCV_results.append(fold_drug_results)
+    # Combine results from all folds into a single DataFrame
+    allCV_results_df = pd.concat(allCV_results, ignore_index=True)
+
+    # Main loop
+    # for run in range(num_round):
+    #     run_postfix = f"run{run}-{postfix}"
+    #     # Loop over each model in the list
+    #     for model_name in ["FNN", "linearregression"]:  #, "linearregression", "tweedieregressor"
+    #         print(f"{model_name}: {run_postfix} original")
+    #         # Train and evaluate the original model
+    #         overall_results_df = train_evaluate_and_log(
+    #                 model_name=model_name,
+    #                 X_train=X_train.values,
+    #                 X_test=X_test.values,
+    #                 y_train_df=y_train,
+    #                 y_test_df=y_test,
+    #                 num_epochs=epochs,
+    #                 run=run,
+    #                 drug=drug,
+    #                 original_or_augment="original",
+    #                 y_target_col=y_target_col,
+    #                 aug_by_col=aug_by_col,
+    #                 save_dir=save_dir,
+    #                 run_postfix=run_postfix,
+    #                 overall_results_df=overall_results_df,
+    #                 title_suffix=f"\n{class_count_str}",
+    #                 regress_or_classify=regress_or_classify
+    #         )
+    #
+    #         # Train and evaluate the augmented model
+    #         tcga_mix.num2aug = 200
+    #         aug_gex, aug_label_dict = tcga_mix.augment_random(
+    #                 aug_by_col, target_features=X_train.values,
+    #                 target_label_dict=y_train.reset_index(drop=True),
+    #                 keys4mix=["binary_response", "diagnosis"],
+    #                 if_include_original=True, save_dir=save_dir
+    #         )
+    #         print(f"{model_name}: {run_postfix} augment")
+    #         overall_results_df = train_evaluate_and_log(
+    #                 model_name=model_name,
+    #                 X_train=aug_gex,
+    #                 y_train_df=pd.DataFrame(aug_label_dict),
+    #                 X_test=X_test.values,
+    #                 y_test_df=pd.DataFrame(y_test),
+    #                 num_epochs=epochs,
+    #                 run=run,
+    #                 drug=drug,
+    #                 original_or_augment="augment",
+    #                 y_target_col=y_target_col,
+    #                 save_dir=save_dir,
+    #                 title_suffix=f"\n{class_count_str}",
+    #                 run_postfix=run_postfix+f"-augby-{aug_by_col[0:5]}{tcga_mix.num2aug}",
+    #                 overall_results_df=overall_results_df,
+    #                 regress_or_classify=regress_or_classify
+    #         )
+    return overall_results_df, allCV_results_df
 
 
 def check_GDSC_TCGA_col_stats( y_df, col2check, group_by_col='TCGA Classification', separate_by="dataset_name",
@@ -1417,71 +1595,78 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
                                                                        top_k=top_var_genes)
 
     split_mode = "leave-cell-line-out"
-    num2aug = 200
-    betas = [0.5]
+    num2aug = 100
+    betas = [1]
     y_col = "IC50"  ##"AUC"
     model_name = "fnn"
     timestamp = datetime.now().strftime("%m-%dT%H-%M")
-    aug_by_column = "6_class_zscore"  # Catgorize zscore into 6 bins, then augment to cover variance in all bins.
+    aug_by_column = "6zscore"## "TCGA Classification" # "3zscore"  # Catgorize zscore into 6 bins, then augment to cover variance in all bins.
 
     drug_grouped_data = gdsc1_dataset.load_gdsc_drug_grouped_data(
             gex_data_all_filtered,
             meta_data_all,
             save_prefix="GDSC",
-            load_from_saved_filename="")  ## "../data/GDSC_drug_response/random_train403_val403_rand42.pickle"
+            load_from_saved_filename=r"..\data\GDSC_drug_response\GDSC_403drugs.pickle")  ## "../data/GDSC_drug_response/random_train403_val403_rand42.pickle"
 
-    model_related_str = f"_beta{betas[0]}" if len(betas) ==1 else "multi-betas"
+    for jj, beta in enumerate([0.5, 1, 2]):  # 0.1, 0.5, 1, 2, 4, 5
+        # beta = betas[0]
+        model_related_str = f"{model_name}_beta{beta:.1f}" if len(betas) ==1 else "multi-betas"
+        # train and save modeled with augmented data
+        model_saved_dir = (f"{save_dir}/models/{split_mode}/{timestamp}_{model_related_str}_{aug_by_column[0:5]}_aug{num2aug}")
 
-    # train and save modeled with augmented data
-    model_saved_dir = (f"{save_dir}/models/{split_mode}/{timestamp}_aug{num2aug}_6clsZ"
-                       f"{model_related_str}")
+        # Create a model collection and train models
+        model_collection = GDSCModelCollection(
+            gexmix,
+            model_saved_dir)
 
-    # Create a model collection and train models
-    model_collection = GDSCModelCollection(
-        gexmix,
-        model_saved_dir)
+        # train and save modeled with original data
+        first_k_items = 2
 
-    # train and save modeled with original data
-    first_k_items = 2
+        # train and save modeled with augmented data
+        model_collection.performance_metrics = {
+                "ori": {
+                        "spearman_score": [], "pearson_score": [], "r2_score": [], "pred_w_ori_meta": []
+                },
+                "aug": {
+                        "spearman_score": [], "pearson_score": [], "r2_score": [], "pred_w_ori_meta": []
+                }
+        }
 
-    # train and save modeled with augmented data
-    model_collection.performance_metrics = {
-            "ori": {
-                    "spearman_score": [], "pearson_score": [], "r2_score": [], "pred_w_ori_meta": []
-            },
-            "aug": {
-                    "spearman_score": [], "pearson_score": [], "r2_score": [], "pred_w_ori_meta": []
-            }
-    }
+        ## train with augmentation of training data
+        model_collection.train_and_save_models(
+                drug_grouped_data, model_name, y_col=y_col, gene_start_col=0,
+                num2aug=num2aug, use_augmentation=True, betas=[beta],
+                keys4mix=["IC50", "AUC", "Z score", "Tissue", "TCGA Classification"],
+                aug_by_column=aug_by_column, if_verbose_K=first_k_items
+        )
+        ## train first with the original data
+        if jj == 0:
+            model_collection.train_and_save_models(
+                    drug_grouped_data, model_name,
+                    y_col=y_col, gene_start_col=0, use_augmentation=False, if_verbose_K=first_k_items
+            )
 
-    ## train first with the original data
-    model_collection.train_and_save_models(
-            drug_grouped_data, model_name,
-            y_col=y_col, gene_start_col=0, use_augmentation=False, if_verbose_K=first_k_items
-    )
-
-    ## train with augmentation of training data
-    model_collection.train_and_save_models(
-            drug_grouped_data, model_name, y_col=y_col, gene_start_col=0,
-            num2aug=num2aug, use_augmentation=True, betas=betas,
-            keys4mix=["IC50", "AUC", "Z score", "Tissue", "TCGA Classification"],
-            aug_by_column="6_class_zscore", if_verbose_K=first_k_items
-    )
-
-    saved_filename = path.join(
+            saved_filename = path.join(
                     model_saved_dir,
-                    f"all_{len(model_collection.performance_metrics['aug']['pearson_score'])}modelss_w_pred.pickle")
-    with open(saved_filename, 'wb') as handle:
-        pickle.dump(model_collection, handle)
+                    f"0-all_models_w_pred.pickle")
+            with open(saved_filename, 'wb') as handle:
+                pickle.dump(model_collection.performance_metrics, handle)
+            ori_pickle_filename = saved_filename
 
-    if path.isfile(ori_pickle_filename):
-        with open(ori_pickle_filename, 'rb') as handle:
-            model_collection_ori = pickle.load(handle)
-            ori_metrics = model_collection_ori.performance_metrics["ori"]
-            model_collection.performance_metrics["ori"] = ori_metrics
+        if path.isfile(ori_pickle_filename):
+            with open(ori_pickle_filename, 'rb') as handle:
+                model_collection_ori_performance_metrics = pickle.load(handle)
+                ori_metrics = model_collection_ori_performance_metrics["ori"]
+                model_collection.performance_metrics["ori"] = ori_metrics
 
-    model_collection.plot_overall_performance(model_collection.performance_metrics, prefix=f"Aug"
-                       f"{num2aug}_{model_name}{model_related_str}", save_dir=model_saved_dir)
+            saved_filename = path.join(
+                    model_saved_dir,
+                    f"0-all_models_w_pred.pickle")
+            with open(saved_filename, 'wb') as handle:
+                pickle.dump(model_collection.performance_metrics, handle)
+
+        model_collection.plot_overall_performance(model_collection.performance_metrics, prefix=f"0-Aug"
+                           f"{num2aug}_beta_{beta:.1f}_{model_name}{model_related_str}", save_dir=model_saved_dir)
 
     """
         3. work on the combined dataset, train GDSC drug response, w/wo DA, test on TCGA: 
@@ -1519,7 +1704,9 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
     gexmix.beta_param = 2
     save_dir_base = "../results/GDSC-RES/GDSC-aug-with-TCGA"
     timestamp = datetime.now().strftime("%m-%dT%H-%M")
-    time_str = (f"{timestamp}-onlyGDSC")
+    class_count_str = "GDSC-TCGA"  ## "GDSC+TCGA -> TCGA"
+
+    time_str = (f"{timestamp}-{class_count_str}")
     save_dir = path.join(save_dir_base, time_str)
     if not path.exists(save_dir):
         makedirs(save_dir, exist_ok=True)
@@ -1538,12 +1725,13 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
     shared_drugs = gdsc1_dataset.get_shared_drugs(TCGA_drug_counts, min_num_samples=20)
 
     num_genes = tcga_clinical_dataset.num_genes
+
     # Initialize the model collection
     model_collection = GDSCModelCollection(gexmix=None)
     results_collect_df = pd.DataFrame(
             columns=["drug", "original_or_augment", "model_name", "accuracy", "run", "num_samples",
                      "aug_by_col"])
-    for drug_name in shared_drugs:
+    for drug_idx, drug_name in enumerate(shared_drugs):
         print(f"Processing drug: {drug_name}")
         drug_save_dir = path.join(save_dir, drug_name)
         if not path.exists(drug_save_dir):
@@ -1558,17 +1746,18 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
 
         # Split the dataframe into train and test sets
         gex_gdsc_x_drug = gex_gdsc_x_drug.iloc[:, -num_genes:]
-        train_gdsc_x, val_gdsc_x = train_test_split(
-                gex_gdsc_x_drug, test_size=0.2, random_state=89)
+        # train_gdsc_x, val_gdsc_x = train_test_split(
+        #         gex_gdsc_x_drug, test_size=0.2, random_state=89)
         # get matching meta_y
-        train_gdsc_y = meta_gdsc_y_drug.loc[train_gdsc_x.index]
-        val_gdsc_y = meta_gdsc_y_drug.loc[val_gdsc_x.index]
+        # train_gdsc_y = meta_gdsc_y_drug.loc[train_gdsc_x.index]
+        # val_gdsc_y = meta_gdsc_y_drug.loc[val_gdsc_x.index]
 
-        val_gdsc_y["binary_response"] = val_gdsc_y["Z score"].apply(lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
-        train_gdsc_y["binary_response"] = train_gdsc_y["Z score"].apply(lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
+        # val_gdsc_y["binary_response"] = val_gdsc_y["Z score"].apply(lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
+        # train_gdsc_y["binary_response"] = train_gdsc_y["Z score"].apply(lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
 
         # Step 5: Get train and test data of this drug from TCGA
         tcga_drug_data = tcga_tumor_drug_pairs[tcga_tumor_drug_pairs['drug_name'] == drug_name]
+
         ## get matching gex from gex_clinical_from_tcga
         gex_tcga_x_drug = gex_clinical_from_tcga[gex_clinical_from_tcga["short_sample_id"].isin(tcga_drug_data["short_sample_id"])].groupby(
             "short_sample_id").first().reset_index()
@@ -1581,21 +1770,6 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
         meta_tcga_y_drug["diagnosis"] = meta_tcga_y_drug["disease_code"]
         meta_tcga_y_drug["dataset_name"] = ["TCGA"] * meta_tcga_y_drug.shape[0]
 
-        train_tcga_y, val_tcga_y = train_test_split(
-                meta_tcga_y_drug, test_size=0.2, random_state=89)
-        # get matching gex from gex_clinical_from_tcga
-        train_tcga_x = gex_tcga_x_drug[
-            meta_tcga_y_drug["short_sample_id"].isin(train_tcga_y["short_sample_id"])
-        ]
-        val_tcga_x = gex_tcga_x_drug[meta_tcga_y_drug["short_sample_id"].isin(
-                val_tcga_y["short_sample_id"])]
-
-        # combined_train_x = pd.concat([train_gdsc_x, train_tcga_x], axis=0)
-        # combined_train_y = pd.concat([train_gdsc_y, train_tcga_y], axis=0)
-        combined_train_x = train_gdsc_x
-        combined_train_y = train_gdsc_y
-
-        class_count_str = "GDSC -> TCGA"  ## "GDSC+TCGA -> TCGA"
 
         ## visualize col stats for both GDSC and TCGA
         visualize_combined_GDSC_TCGA_given_drug(
@@ -1614,22 +1788,19 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
                 pd.concat([meta_gdsc_y_drug, meta_tcga_y_drug], axis=0), "binary_response",
                 group_by_col=['diagnosis'], save_dir=drug_save_dir, separate_by="dataset_name",
                 prefix=f"{drug_name}")
-        # check_GDSC_TCGA_col_stats(
-        #          meta_tcga_y_drug, "binary_response",
-        #         group_by_col=['diagnosis'], save_dir=drug_save_dir, separate_by="dataset_name",
-        #         prefix=f"{drug_name}")
 
         # test the performance for classificaiton + data augmentation
-        results_collect_df = make_classifiers(
+        results_collect_df, results_w_prediction_gt_df = make_classifiers(
             gexmix,
-            X_train=combined_train_x,
-            y_train=combined_train_y,
-            X_test=val_tcga_x,
-            y_test=val_tcga_y,
+            train_val_x=gex_gdsc_x_drug,
+            train_val_y=meta_gdsc_y_drug,
+            tcga_X_test=gex_tcga_x_drug,
+            tcga_y_test=meta_tcga_y_drug,
             class_count_str=class_count_str,
             overall_results_df=results_collect_df,
             aug_by_col="binary_response",
             epochs=5,
+                runs=3,
             y_target_col="binary_response",  # aug_by_col and y_target_col don't need to be the same
             postfix=f"{drug_name}", drug=drug_name,
             regress_or_classify="regression",
@@ -1639,7 +1810,13 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
         results_collect_df.to_csv(
                 path.join(
                         path.dirname(drug_save_dir),
-                        f"{timestamp}-overall_drp_{drug_name}.csv"
+                        f"{drug_name}-overall_drp_summary.csv"
+                )
+        )
+        results_w_prediction_gt_df.to_csv(
+                path.join(
+                        path.dirname(drug_save_dir),
+                        f"{drug_name}-overall_drp_with_pred_gt_meta.csv"
                 )
         )
         print("ok")
@@ -1687,7 +1864,7 @@ def visualize_combined_GDSC_TCGA_given_drug(drug_name, meta_df_list, gex_df_list
     # Extract unique categories from the binary_response column
     categories = concat_meta['binary_response'].unique()
     # Define a custom palette where 'NaN' is mapped to gray
-    base_palette = sns.color_palette("cool", n_colors=len(categories) - 1)
+    base_palette = sns.color_palette("cool", n_colors=len(categories))
     custom_palette = dict(zip(categories[categories != 'NaN'], base_palette))
     custom_palette['NaN'] = (0.8, 0.8, 0.8)  # Explicitly set gray for 'NaN'
     # Scatter plot with hue including NaN
@@ -2477,8 +2654,8 @@ def overall_aug_mix_within_TCGA_investigation(aug_mix_col, drug_counts, gexmix, 
         results_collect_df = make_classifiers(gexmix,
                                               X_train=X_train,
                                               y_train=df_y_train_dict,
-                                              X_test=X_test,
-                                              y_test=df_y_test_dict,
+                                              tcga_X_test=X_test,
+                                              tcga_y_test=df_y_test_dict,
                                               class_count_str=class_counts_str,
                                               overall_results_df=results_collect_df,
                                               aug_by_col=aug_by_col,
@@ -2830,10 +3007,12 @@ def investigate_different_normalization_2datasets(input_datasets, norm_method="c
         ### apply two step normalization
         # Step 1: Sample-wise z-score normalization for all samples in the dataset
         combined_gex_normed = combined_gex.apply(zscore, axis=1)
-        new_combined_gex, new_combined_meta = two_step_normalization(combined_gex_normed, combined_meta)
+        new_combined_gex = combined_gex_normed.copy()
+        new_combined_meta = combined_meta.copy()
+        # new_combined_gex, new_combined_meta = two_step_normalization(combined_gex_normed, combined_meta)
 
         # Create a unified batch identifier
-        new_combined_meta['combined_batch'] = new_combined_meta['dataset_name'] + '_' + new_combined_meta[
+        combined_meta['combined_batch'] = combined_meta['dataset_name'] + '_' + combined_meta[
             'new_diagnosis'] #  + '_' + new_combined_meta['tumor_purity_bin']
 
         if norm_method == "harmony":
@@ -3060,19 +3239,78 @@ if __name__ == "__main__":
     combat_3datasets = datasets["combat_3"]
     combat_3datasets_mix = mix_objects.get("combat_3")
 
-    # ### Part 1: train with GDSC validation on GDSC
-    GDSC_DRP_with_mix_with_GDSC(
-        combat_3datasets, combat_3datasets_mix,
-        save_dir=save_dir)
+
+    # # ### Part 1: train with GDSC validation on GDSC
+    # GDSC_DRP_with_mix_with_GDSC(
+    #     combat_3datasets, combat_3datasets_mix,
+    #     save_dir=save_dir)
 
     ### Part 2: train with GDSC/GDSC+TCGA validation on GDSC or TCGA
     GDSC_DRP_with_mix_with_TCGA(combat_3datasets, combat_3datasets_mix, filename_dict["TCGA"]["drug_response"])
-
-    ### Part 3: train with TCGA validation on TCGA
+    #
+    # ### Part 3: train with TCGA validation on TCGA
     clinical_tcga_investigation(combat_3datasets, combat_3datasets_mix,
                                 filename_dict["TCGA"]["drug_response"],
                                 save_dir=save_dir)
     print("ok")
 
+"""
+drug list from: Targets
+Nilotinib: 1013
+Temozolomide: 1375
+Sorafenib: 30
+Cisplatin: 1005
+Paclitaxel: 11
+Doxorubicin: 1386
+Crizotinib: 37
+Tanespimycin: 1026
+PHA-665752: 6
+Lapatinib: 119
+Nutlin-3: 1047 
+Saracatinib: 38
+Crizotinib: 37
+Panobinostat: 438
+Sorafenib: 30
+PD0325901: 1060
+Palbociclib: 1054
+Paclitaxel: 11
+Selumetinib: 1498
+PLX-4720: 1371
+NVP-TAE684: 35
+"""
 
+"""
+drugs from CODE-AE
+AZD8055: 1059
+BMS-754807: 184
+Vorinostat: 1012
+Temozolomide: 1375
+Sunitinib: 5
+Temozolomide: 1375
+Sorafenib: 30
+Nilotinib: 1013
+Axitinib: 1021
+Tamoxifen: 1199
+Paclitaxel: 11
+Doxorubicin: 1386
+Cisplatin: 1005
+Gemcitabine: 1393
+PF-4708671: 1129
+AZD7762: 1402
+AZD6482: 1066
+AZ628: 29
+RO-3306: 1052
+GSK269962A: 1192
+GSK1904529A: 202
+BMS-536924: 1091
+Embelin: 172
+JQ1: 1218
+KU-55933: 1030
+MK-2206: 1053
+Bosutinib: 1019
+CHIR-99021: 1241
+PAC-1: 175
+BI-2536: 60
+PF-562271: 158
+"""
 

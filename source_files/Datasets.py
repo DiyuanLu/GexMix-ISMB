@@ -17,8 +17,10 @@ from glob import glob
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from scipy.stats import pearsonr, spearmanr
 from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.preprocessing import StandardScaler
 
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import ElasticNet
 
 from plotting_utils import (getmeta2trackdict, generate_pastel_colors,
                             interactive_bokeh_all_meta_in1_subplots,
@@ -393,7 +395,7 @@ class TCGAClinicalDataProcessor:
         ]
         self.gex_clinical_from_tcga = self.gex_all.loc[self.meta_clinical_from_tcga.index]
 
-        self.matched_response_with_tcga = self._harmonize_drug_names_get_stats()  ## embedded method
+        self._harmonize_drug_names_get_stats()  ## embedded method
 
         return self.gex_clinical_from_tcga, self.meta_clinical_from_tcga, self.matched_response_with_tcga
 
@@ -768,7 +770,7 @@ class GExMix:
                 second_col_pool_indices.append(
                         np.random.choice(
                             group.index,
-                            np.int32(num_samples_per_group / len(uniq_diseases)),  # evenly get samples from each group
+                            max(np.int32(num_samples_per_group / len(uniq_diseases)), 2),  # evenly get samples from each group
                             replace=True)
                 )
             second_col_indices.append(
@@ -1534,6 +1536,7 @@ def save_drug_data_dict_to_dataframe(drug_data_dict, prefix="prefix", save_dir="
         path.join(save_dir, f"{prefix}_L_Cellline_O_test_{len(train_rows)}drugs.csv"),
         index=False)
 
+
 def categorize_zscore_6_class(zscore):
     if zscore < -1:  #  (IC50 < 0.37μM
         return 5
@@ -1547,6 +1550,26 @@ def categorize_zscore_6_class(zscore):
         return 1
     else:
         return 0 #  (IC50 > 7.39μM )
+
+def categorize_zscore_4_class(zscore):
+    if zscore < -1:  #  (0.37μM < IC50 < 1μM )
+        return 3
+    elif -1 <= zscore < 0:   # (IC50 between 1μM and 7.39μM)
+        return 2
+    elif 0 <= zscore < 1:   # (IC50 between 1μM and 7.39μM)
+        return 1
+    else:
+        return 0 #  (IC50 > 7.39μM )
+
+
+def categorize_zscore_3_class(zscore):
+    if zscore < -1:  #
+        return 2
+    elif -1 <= zscore < 1:  #  (0.37μM < IC50 < 1μM )
+        return 1
+    else:
+        return 0 #  (IC50 > 7.39μM )
+
 
 class GDSCModelCollection:
     def __init__(self, gexmix, model_base_dir="models"):
@@ -1619,17 +1642,20 @@ class GDSCModelCollection:
             from tensorflow.keras.callbacks import EarlyStopping
             # EarlyStopping Callback
             early_stopping = EarlyStopping(
-                monitor='val_loss', patience=5, restore_best_weights=True)
+                monitor='val_loss', patience=10, restore_best_weights=True)
             epochs = kwargs.get('epochs', 50)
-            batch_size = kwargs.get('batch_size', 32)
+            batch_size = kwargs.get('batch_size', 64)
             val_x = kwargs.get('val_x')
             val_y = kwargs.get('val_y')
             x_val = tf.convert_to_tensor(val_x)
             y_val = tf.convert_to_tensor(val_y)
+
             history = model.fit(
                     X_train, y_train, epochs=epochs, batch_size=batch_size,
                     validation_data=[x_val, y_val], callbacks=early_stopping)
         elif model_type == 'sklearn':
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
             model.fit(X_train, y_train)
             history = None
         else:
@@ -1652,40 +1678,13 @@ class GDSCModelCollection:
         Args:
             performance_metrics (dict): Dictionary containing performance metrics for all drugs.
         """
-        # metrics = [ele for ele in performance_metrics.get("ori", {}).keys() if "score" in ele or "rho" in ele]
-        # ori_metrics = performance_metrics.get("ori", {})
-        # aug_metrics = performance_metrics.get("aug", {})
-        #
-        # fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
-        # ori_or_aug = ""
-        # for i, metric in enumerate(metrics):
-        #     ori_values = [item[2] for item in ori_metrics.get(metric)]
-        #     aug_values = [item[2] for item in aug_metrics.get(metric)]
-        #     drugs = [item[0] for item in aug_metrics.get(metric)]
-        #     x = np.arange(max(len(aug_values), len(ori_values)))
-        #     width = 0.35
-        #     if len(ori_values) > 0:
-        #         axes[i].bar(x - width / 2, ori_values, width, label='Original')
-        #         ori_or_aug += "+ori"
-        #         prefix += f"{len(ori_values)}"
-        #     if len(aug_values) > 0:
-        #         axes[i].bar(x + width / 2, aug_values, width, label='Augmented')
-        #         ori_or_aug += "+aug"
-        #     axes[i].set_xlabel('Drugs' if i == (len(metric) - 1) else "")
-        #     axes[i].set_ylabel(metric)
-        #     axes[i].set_title(f'{metric} for all drugs')
-        #     # set rotation for x-axis labels
-        #     axes[i].set_xticks(x, drugs, rotation=45, ha='right')
-        #     axes[i].legend(fontsize=10, bbox_to_anchor=(1., 1), loc='upper left')
-        # plt.tight_layout()
-
         # Assume performance_metrics contains original and augmented metrics
         metrics = [ele for ele in performance_metrics.get("ori", {}).keys() if
                    "score" in ele or "rho" in ele]
         ori_metrics = performance_metrics.get("ori", {})
         aug_metrics = performance_metrics.get("aug", {})
 
-        fig, axes = plt.subplots(len(metrics), 1, figsize=(8, 8), sharex=True)
+        fig, axes = plt.subplots(len(metrics), 1, figsize=(10, 8), sharex=True)
         ori_or_aug = ""
         for i, metric in enumerate(metrics):
             # Get the original and augmented metrics
@@ -1719,6 +1718,10 @@ class GDSCModelCollection:
                     aug_means.append(0)  # Default value if no data
                     aug_stds.append(0)
 
+                # pearson_corr, p_pearson = pearsonr(ytrue, yaug)
+                # sp_corr, p_spearman = spearmanr(ytrue, yaug)
+                # r2 = r2_score(ytrue, yaug)
+
             # Bar plot with error bars
             x = np.arange(len(unique_drugs))
             width = 0.35
@@ -1732,7 +1735,8 @@ class GDSCModelCollection:
             axes[i].set_xticks(x)
             axes[i].set_xticklabels(unique_drugs, rotation=45, ha='right')
             axes[i].legend(fontsize=10, bbox_to_anchor=(1., 1), loc='upper left')
-        plt.savefig(path.join(self.model_base_dir, f"{prefix} drugs_overall_performance.png"))
+        plt.tight_layout()
+        plt.savefig(path.join(self.model_base_dir, f"0-{prefix} drugs_overall_performance.png"))
         plt.close()
 
     def plot_history_train_val(self, history_dict, title="title", prefix="run_postfix",
@@ -1797,7 +1801,9 @@ class GDSCModelCollection:
             val_drug, X_val, y_val = val_data_list
 
             val_drug = self.format_drug_name(val_drug)
-            val_prediction = model.predict(X_val.iloc[:, gene_start_col:])
+            scaler = StandardScaler()
+            X_val = scaler.fit_transform(X_val.iloc[:, gene_start_col:])
+            val_prediction = model.predict(X_val)
             # If prediction is 2D, take the first column
             if val_prediction.ndim > 1:
                 if val_prediction.shape[1] > 1:
@@ -1825,23 +1831,24 @@ class GDSCModelCollection:
             self.performance_metrics[ori_or_aug]["r2_score"].append([drug, beta, r2])
             self.performance_metrics[ori_or_aug]["pred_w_ori_meta"].append([drug, beta, merged_meta_w_prediction])
 
-            plt.figure(figsize=(8, 6))
-            for jj, (key, value) in enumerate(self.performance_metrics["ori"].items()):
-                if "score" in key and len(value) > 0:
-                    value = np.array(value[0])
-                    label = "Original" if jj == 0 else ""
-                    plt.scatter(value[1].astype(np.float32), value[2].astype(np.float32), marker="*", label=label)
-            for key, value in self.performance_metrics['aug'].items():
-                if "score" in key and len(value) > 0:
-                    value = np.array(value)
-                    plt.plot(value[:, 1].astype(np.float32), value[:, 2].astype(np.float32), label=key)
-                    plt.legend()
-            plt.title(f"{drug.capitalize()} {model_name} Aug. Performance")
-            plt.xlabel("Beta")
-            plt.ylabel("Score")
-            plt.tight_layout()
-            plt.savefig(path.join(self.model_base_dir, f"{drug}_{model_name}_aug_performance.png"))
-            plt.close()
+            ## this is usefull for multiple beta performance.
+            # plt.figure(figsize=(8, 6))
+            # for jj, (key, value) in enumerate(self.performance_metrics["ori"].items()):
+            #     if "score" in key and len(value) > 0:
+            #         value = np.array(value[0])
+            #         label = "Original" if jj == 0 else ""
+            #         plt.scatter(value[1].astype(np.float32), value[2].astype(np.float32), marker="*", label=label)
+            # for key, value in self.performance_metrics['aug'].items():
+            #     if "score" in key and len(value) > 0:
+            #         value = np.array(value)
+            #         plt.plot(value[:, 1].astype(np.float32), value[:, 2].astype(np.float32), label=key)
+            #         plt.legend()
+            # plt.title(f"{drug.capitalize()} {model_name} Aug. Performance")
+            # plt.xlabel("Beta")
+            # plt.ylabel("Score")
+            # plt.tight_layout()
+            # plt.savefig(path.join(self.model_base_dir, f"{drug}_{model_name}_aug_performance.png"))
+            # plt.close()
 
             self.visualize_prediction_gt(
                 gt_predict_df, y_val, y_col=y_col, prefix=f"{val_drug.capitalize()}-{ori_or_aug.capitalize()}-{postfix}",
@@ -1929,7 +1936,7 @@ class GDSCModelCollection:
         # Generate rank-related plots
         self._plot_rank_difference_histogram(
             predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
-        self._plot_rank_difference(predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
+        # self._plot_rank_difference(predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
 
         self._plot_violin_grouped_by_metric(
                 data_df=predictions_df,
@@ -1944,7 +1951,6 @@ class GDSCModelCollection:
                 ylabel=y_col.capitalize() + " Rank",
                 save_dir=save_dir,
                 plot_mode="box")
-
 
     def _plot_rank_difference(self, predictions_df, prefix, group_by_col='TCGA Classification', corr_str="corr_str", save_dir="./"):
         predictions_df['rank_difference'] = predictions_df['ground_truth_rank'] - predictions_df[
@@ -2117,7 +2123,6 @@ class GDSCModelCollection:
             plot_title (str): Title for the plot. If None, a default title will be generated.
         """
         # Prepare data for violin plot
-        # Prepare data for violin plot
         metric1_values = data_df[[group_by_col, metric1_col]].rename(columns={metric1_col: 'value'})
         metric1_values['value_type'] = metric1_label
         metric2_values = data_df[[group_by_col, metric2_col]].rename(columns={metric2_col: 'value'})
@@ -2143,40 +2148,43 @@ class GDSCModelCollection:
                 spearman_results[group] = (rho, p_value)
             else:
                 spearman_results[group] = (None, None)
+
         # Create boxplot with ordered x-axis
         unique_classes = sorted_grouped[group_by_col].unique()
-        plt.figure(figsize=(max(len(unique_classes)*0.65, 8), 6))
+        # Define color palette for specific `value_type`
+        custom_palette = {
+                metric1_label: 'tab:orange',
+                metric2_label: 'tab:blue'
+        }
+        plt.figure(figsize=(max(len(unique_classes)*0.45, 8), 6))
         for i, cls in enumerate(unique_classes):
             if i % 2 == 0:  # Add alternating gray background shades
                 plt.axvspan(i - 0.5, i + 0.5, color='lightgray', alpha=0.3, zorder=0)
         ax = sns.boxplot(
                 x=group_by_col, y='value', hue='value_type', data=sorted_grouped,
-                palette='pastel',  ## order=unique_classes
+                palette=custom_palette,  ## order=unique_classes
         )
         # Customize plot
         plt.legend(loc="lower right")
         # Update the x-tick labels to include sample counts
         group_counts = sorted_grouped.groupby(group_by_col).size() / 2
         # Add correlation text to the top of each violin
-        xticks = ax.get_xticks()
         xtick_labels = []
         for i, group in enumerate(sorted_grouped[group_by_col].unique()):
-            if i == 23:
-                print("ok")
-            rho, p = spearman_results[group]
-            if rho is not None:  # If correlation was computed
-                text = f"ρs.:{rho:.2f}\np:{p:.2g}"
-            else:
-                text = ""
-            ax.text(
-                    xticks[i],  # Position at the x-tick of the group
-                    ax.get_ylim()[1] - 0.051 * (ax.get_ylim()[1] - ax.get_ylim()[0]),
-                    # Just above the violin
-                    text,
-                    ha='center', fontsize=6, color='black'
-            )
-            xtick_labels.append(f"{group}\n(n={group_counts[group]})")
-        ax.set_xticklabels(xtick_labels, rotation=45)
+            # rho, p = spearman_results[group]
+            # if rho is not None:  # If correlation was computed
+            #     text = f"ρs.:{rho:.2f}\np:{p:.2g}"
+            # else:
+            #     text = ""
+            # ax.text(
+            #         xticks[i],  # Position at the x-tick of the group
+            #         ax.get_ylim()[1] - 0.051 * (ax.get_ylim()[1] - ax.get_ylim()[0]),
+            #         # Just above the violin
+            #         text,
+            #         ha='center', fontsize=8, color='black'
+            # )
+            xtick_labels.append(f"{group} (n={group_counts[group]})")
+        ax.set_xticklabels(xtick_labels, rotation=45, ha="right")
         plt.text(
                 1.03, 1.0, corr_str,
                 transform=plt.gca().transAxes, fontsize=15, verticalalignment='top',
@@ -2357,84 +2365,107 @@ class GDSCModelCollection:
         # Initialize StratifiedKFold
         n_splits = 5
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-        need2checktest_keys = [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431]+list(train_val_data_dict.keys())[0:if_verbose_K]
-        ##  299, 1392, 1378, 190, 1372, 194, 431 list(train_data_dict.keys())[0:if_verbose_K] +
+        need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
+        # need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
+        # need2checktest_keys = set(
+        #         [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
+        #                                                             37, 438, 30, 1060, 1054, 11,
+        #                                                             1498, 1371, 35])
+        #
 
         # Initialize containers for storing results across drugs
         for jj, drug_key in enumerate(need2checktest_keys):
-            # Extract drug data
-            drug, train_val_features, train_val_y_df = train_val_data_dict[drug_key]
+            try:
+                # Extract drug data
+                drug, train_val_features, train_val_y_df = train_val_data_dict[drug_key]
 
-            ori_or_aug = "aug" if use_augmentation else "ori"
-            beta_str = f"{betas[0]:.3f}" if len(betas) == 1 else "multi-beta"
-            drug_prefix = f"No{drug_key}-{drug.capitalize()}-{ori_or_aug}-beta{beta_str}"
-            print(f"Processing drug {drug_key} {drug.capitalize()} ({jj + 1}/{len(need2checktest_keys)}drugs)")
+                ori_or_aug = "aug" if use_augmentation else "ori"
 
-            train_val_y_df['TCGA Classification'] = train_val_y_df['TCGA Classification'].astype(str)
-            if "diagnosis" not in train_val_y_df.columns:
-                train_val_y_df['diagnosis'] = train_val_y_df['TCGA Classification'].astype(str)
-            else:
-                train_val_y_df['diagnosis'] = train_val_y_df['diagnosis'].astype(str)
+                if ori_or_aug == "ori":
+                    beta_str = ""
+                else:
+                    beta_str = f"beta{betas[0]:.2f}" if len(betas) == 1 else "multi-beta"
 
-            self._check_col_stats(
-                    pd.DataFrame(train_val_y_df), ['IC50', 'AUC', 'Z score'],
-                    group_by_col='TCGA Classification',
-                    prefix=f"{drug.capitalize()}-ori-all",
-                    save_dir=self.model_base_dir)
+                drug_prefix = f"No{drug_key}-{drug.capitalize()}-{ori_or_aug}-{beta_str}"
+                print(f"Processing drug {drug_key} {drug.capitalize()} ({jj + 1}/{len(need2checktest_keys)}drugs)")
 
-            allCV_results = []
-            self.coll_history = {}
-            # Perform 5-fold cross-validation with leave cell line out data
-            for fold_idx, (train_idx, val_idx) in enumerate(skf.split(train_val_y_df["cell_line_name"], train_val_y_df["diagnosis"].values)):
-                print(f"{drug}  Fold {fold_idx + 1}")
-                fold_drug_results = pd.DataFrame({"Ground Truth": [],
-                                                  "Predictions": [],
-                                                  "Drug": [],
-                                                  "Fold": [],
-                                                 "beta": []})
+                train_val_y_df['TCGA Classification'] = train_val_y_df['TCGA Classification'].astype(str)
+                if "diagnosis" not in train_val_y_df.columns:
+                    train_val_y_df['diagnosis'] = train_val_y_df['TCGA Classification'].astype(str)
+                else:
+                    train_val_y_df['diagnosis'] = train_val_y_df['diagnosis'].astype(str)
 
-                # Split train and validation data for this fold
-                train_features = train_val_features.iloc[train_idx].reset_index(drop=True)
-                train_y_df = train_val_y_df.iloc[train_idx].reset_index(drop=True)
-                val_features = train_val_features.iloc[val_idx].reset_index(drop=True)
-                val_y_df = train_val_y_df.iloc[val_idx].reset_index(drop=True)
+                # self._check_col_stats(
+                #         pd.DataFrame(train_val_y_df), ['IC50'],
+                #         group_by_col='TCGA Classification',
+                #         prefix=f"{drug.capitalize()}-ID{drug_key}-Ori-all",
+                #         save_dir=self.model_base_dir)
+                #
+                # visualize_data_with_meta(
+                #         train_val_features, pd.DataFrame(train_val_y_df),
+                #         ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
+                #         postfix=f"Ori", cmap="viridis", figsize=[10, 6], vis_mode="umap",
+                #         save_dir=self.model_base_dir
+                # )
+                self.if_saved_drug_vis = False
+                allCV_results = []
+                self.coll_history = {}
+                # Perform 5-fold cross-validation with leave cell line out data
+                for fold_idx, (train_idx, val_idx) in enumerate(skf.split(train_val_y_df["cell_line_name"],
+                                                                          train_val_y_df["diagnosis"].values)):
+                # for fold_idx, (train_idx, val_idx) in enumerate(kf.split(np.arange(len(train_val_y_df)))):
+                    print(f"{drug}  Fold {fold_idx + 1}")
+                    fold_drug_results = pd.DataFrame({"Ground Truth": [],
+                                                      "Predictions": [],
+                                                      "Drug": [],
+                                                      "Fold": [],
+                                                     "beta": []})
+                    # Split train and validation data for this fold
+                    train_features = train_val_features.iloc[train_idx].reset_index(drop=True)
+                    train_y_df = train_val_y_df.iloc[train_idx].reset_index(drop=True)
+                    val_features = train_val_features.iloc[val_idx].reset_index(drop=True)
+                    val_y_df = train_val_y_df.iloc[val_idx].reset_index(drop=True)
 
-                # Initialize model only train one model with all the augmented data
-                model, model_type = self.get_regression_model_given_name(
-                        model_name, input_shape=train_val_features.shape[1])
+                    # Initialize model only train one model with all the augmented data
+                    model, model_type = self.get_regression_model_given_name(
+                            model_name, input_shape=train_val_features.shape[1])
 
-                augmented_train_datasets = self.get_training_data_with_augmentation(
-                        betas, train_features, train_y_df, drug, gene_start_col,
-                        use_augmentation=use_augmentation, **aug_kwargs)
+                    augmented_train_datasets = self.get_training_data_with_augmentation(
+                            betas, train_features, train_y_df, drug, gene_start_col,
+                            use_augmentation=use_augmentation, **aug_kwargs)
 
-                for beta, train_x, train_y in augmented_train_datasets:
-                    # Train and evaluate model
-                    fold_ground_truth, fold_predictions = self.train_and_save_one_model(
-                            model, model_type, drug_key, drug,
-                            train_x, train_y[y_col], model_name,
-                            y_col=y_col, beta=beta, val_data_list=[drug, val_features, val_y_df],
-                            ori_or_aug=ori_or_aug, postfix=f"fold{fold_idx + 1}-beta{beta:.3f}",
-                            gene_start_col=gene_start_col
-                    )
+                    for beta, train_x, train_y in augmented_train_datasets:
 
-                # Store fold results
-                fold_drug_results["Ground Truth"] = fold_ground_truth
-                fold_drug_results["Predictions"] = fold_predictions
-                fold_drug_results["Fold"] = [fold_idx + 1] * len(fold_ground_truth)
-                fold_drug_results["Drug"] = [drug] * len(fold_ground_truth)
-                fold_drug_results["beta"] = [betas[0]] * len(fold_ground_truth) if len(betas) == 1 else [99] * len(fold_ground_truth)
+                        # Train and evaluate model
+                        fold_ground_truth, fold_predictions = self.train_and_save_one_model(
+                                model, model_type, drug_key, drug,
+                                train_x, train_y[y_col], model_name,
+                                y_col=y_col, beta=beta, val_data_list=[drug, val_features, val_y_df],
+                                ori_or_aug=ori_or_aug, postfix=f"ID{drug_key}-fold{fold_idx + 1}-beta{beta:.2f}",
+                                gene_start_col=gene_start_col
+                        )
 
-                fold_drug_results = pd.concat([fold_drug_results, val_y_df], axis=1)
+                    # Store fold results
+                    fold_drug_results["Ground Truth"] = fold_ground_truth
+                    fold_drug_results["Predictions"] = fold_predictions
+                    fold_drug_results["Fold"] = [fold_idx + 1] * len(fold_ground_truth)
+                    fold_drug_results["Drug"] = [drug] * len(fold_ground_truth)
+                    fold_drug_results["beta"] = [betas[0]] * len(fold_ground_truth) if len(betas) == 1 else [99] * len(fold_ground_truth)
 
-                allCV_results.append(fold_drug_results)
+                    fold_drug_results = pd.concat([fold_drug_results, val_y_df], axis=1)
 
-            # Append drug results
-            allCV_results_df = pd.concat(allCV_results, ignore_index=True)
+                    allCV_results.append(fold_drug_results)
 
-            ## concat val meta data to the results_df
-            allCV_results_df.to_csv(path.join(self.model_base_dir, f"{drug_prefix}FCV-prediction.csv"), index=True)
-            print("Cross-validation results saved to 'cross_validation_results_by_drug.csv'")
+                # Append drug results
+                allCV_results_df = pd.concat(allCV_results, ignore_index=True)
+
+                ## concat val meta data to the results_df
+                allCV_results_df.to_csv(path.join(self.model_base_dir, f"{drug_prefix}FCV-pred-{ori_or_aug}.csv"), index=True)
+                print("Cross-validation results saved to 'cross_validation_results_by_drug.csv'")
+            except Exception as e:
+                print(f"Error in processing drug {drug_key}, {drug.capitalize()}: {e}")
 
     def get_training_data_with_augmentation(self, betas, train_features,
                                             train_y_df, drug, gene_start_col,
@@ -2445,30 +2476,42 @@ class GDSCModelCollection:
 
         # Optionally perform data augmentation
         beta_feature_meta_list = []
+        not_saved_vis = False
         if use_augmentation:
-            keys4mix += [aug_by_column]
             for beta in betas:
                 self.gexmix.beta_param = beta
 
-                if "6_class_zscore" == aug_by_column:
+                if "6zscore" == aug_by_column:
                     train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_6_class(x))
+                elif "3zscore" == aug_by_column:
+                    train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_3_class(x))
                 aug_features, aug_y_df = self.augment_data(
                         train_features.iloc[:, gene_start_col:], train_y_df,
                         if_include_original=True, **aug_kwargs
                 )
                 beta_feature_meta_list.append((beta, aug_features, aug_y_df))
-                self._check_col_stats(
-                        pd.DataFrame(aug_y_df), ['IC50', 'AUC', 'Z score'],
-                        group_by_col="TCGA Classification",
-                        prefix=f"{drug.capitalize()}-Aug-train-beta{beta:.3f}",
-                        save_dir=self.model_base_dir)
+
+                if not self.if_saved_drug_vis:
+                    self._check_col_stats(
+                            pd.DataFrame(aug_y_df), ['IC50'],
+                            group_by_col="TCGA Classification", histo_col="IC50",
+                            prefix=f"{drug.capitalize()}-Aug-train-beta{beta:.3f}",
+                            save_dir=self.model_base_dir)
+
+                    visualize_data_with_meta(
+                            aug_features, pd.DataFrame(aug_y_df),
+                            ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
+                            postfix=f"{drug.capitalize()}-Aug{aug_kwargs.get('num2aug')}-train-beta{beta:.1f}", cmap="viridis", figsize=[10, 6], vis_mode="umap",
+                            save_dir=self.model_base_dir
+                    )
+                    self.if_saved_drug_vis = True
         else:
             train_features = train_features.iloc[:, gene_start_col:]
             beta_feature_meta_list.append((0, train_features, train_y_df))
         return beta_feature_meta_list
 
     def _check_col_stats(self, y_df, col2check, group_by_col='TCGA Classification',
-                         prefix="prefix", save_dir="./"):
+                         prefix="prefix", histo_col="IC50", save_dir="./"):
         # Create subplots for each metric
         y_df[group_by_col] = y_df[group_by_col].astype(str)
         sample_counts = y_df[group_by_col].astype(str).value_counts()
@@ -2481,26 +2524,69 @@ class GDSCModelCollection:
         for col in col2check:
             y_df[f"mean_{col}"] = y_df.groupby(group_by_col)[col].transform('mean')
 
-        # Sort by mean ground truth
         sorted_grouped = y_df.sort_values(f"mean_{col2check[0]}")
-
-        fig, axes = plt.subplots(len(col2check), 1, figsize=(12, 3 * len(col2check)), sharex=True)
+        fig, axes = plt.subplots(len(col2check) + 1, 1, figsize=(12, max(8, 3 * len(col2check))))
         plt.title(f"{prefix}")
+        sns.histplot(data=sorted_grouped, x=histo_col, kde=True, bins=100, ax=axes[0])
+        axes[0].set_xlabel(histo_col, fontsize=12)
+        axes[0].set_ylabel("Frequency", fontsize=12)
+        axes[0].set_title(f"Histogram of {histo_col}", fontsize=14)
         for i, metric in enumerate(col2check):
             sns.boxplot(
                     data=sorted_grouped,
                     x=f'{group_by_col} (count)',
                     y=metric,
-                    ax=axes[i]
+                    ax=axes[i + 1]
             )
-            axes[i].set_title(col2check[i], fontsize=14)
-            axes[i].set_xlabel('' if i < 2 else group_by_col)
-            axes[i].set_ylabel(metric)
-            axes[i].tick_params(axis='x', rotation=45)
-        fig.tight_layout()
+            axes[i + 1].set_title(col2check[i], fontsize=14)
+            # Remove x-labels and ticks for all but the last subplot
+            if i + 1 < len(col2check):
+                axes[i + 1].set_xlabel('')
+                axes[i + 1].set_xticks([])
+            else:
+                axes[i + 1].set_xlabel(group_by_col, fontsize=12)
+            axes[i + 1].set_ylabel(metric)
+            axes[i + 1].tick_params(axis='x', rotation=45)
+            for label in axes[i + 1].get_xticklabels():
+                label.set_horizontalalignment('right')
+            axes[i + 1].grid(alpha=0.3)
+        plt.subplots_adjust(hspace=0.2)
+        plt.tight_layout()
         # Save and close plot
         plt.savefig(path.join(save_dir, f"{prefix}-stats-{group_by_col}.png"))
         plt.close()
+
+    def plot_umap_of_different_aug_params(self, train_features, train_y_df, gene_start_col=0, drug="drug", **aug_kwargs):
+
+        # aug_projection = visualize_data_with_meta(
+        #         train_features, pd.DataFrame(train_y_df),
+        #         ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
+        #         postfix=f"Ori", cmap="viridis", figsize=[10, 6], vis_mode="umap",
+        #         save_dir=self.model_base_dir
+        # )
+        train_y_df["3_class_zscore"] = train_y_df["Z score"].apply(
+            lambda x: categorize_zscore_3_class(x))
+        aug_kwargs.update({"aug_by_column": "3_class_zscore"})
+        for beta in [0.1, 0.5, 1, 2, 5]:  # , 0.5, 1, 2, 5
+            for num2aug in [20, 50, 100, 200, 400]:  # , 100, 200, 400
+                self.gexmix.beta_param = beta
+                aug_kwargs.update({"num2aug": num2aug})
+                aug_features, aug_y_df = self.augment_data(
+                        train_features.iloc[:, gene_start_col:], train_y_df,
+                        if_include_original=True, **aug_kwargs
+                )
+                aug_projection = visualize_data_with_meta(
+                        aug_features, pd.DataFrame(aug_y_df),
+                        ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
+                        postfix=f"{drug.capitalize()}-augby-3clsZ-beta{beta:.1f}-num{num2aug}",
+                        cmap="viridis", figsize=[10, 6], vis_mode="umap",
+                        save_dir=self.model_base_dir
+                )
+                self._check_col_stats(
+                        pd.DataFrame(aug_y_df), ['IC50', 'Z score'],
+                        group_by_col="TCGA Classification",
+                        prefix=f"{drug.capitalize()}-Augby-3clsZ-beta{beta:.1f}-num{num2aug}",
+                        save_dir=self.model_base_dir)
 
     def predict_with_all_models(self, models_dict, gene_expression_sample, y_df, drug="drug", y_col="IC50"):
         """
@@ -2587,6 +2673,14 @@ class GDSCModelCollection:
             model_type = "sklearn"
         elif model_name.lower() == "linearregression":
             model = LinearRegression()
+        elif model_name.lower() == "elastic":
+            # Initialize Elastic Net with default parameters
+            model = ElasticNetCV(
+                    alphas=[0.1, 0.5, 1.0],  # Fewer alpha values to search
+                    l1_ratio=[0.1, 0.5, 0.9],  # Fewer l1_ratio values
+                    cv=3,  # Reduced number of folds for faster execution
+                    random_state=42
+            )
             model_type = "sklearn"
         elif model_name.lower() == "tweedieregressor":
             model = TweedieRegressor(power=1, alpha=0.5, link='log')
@@ -2594,18 +2688,18 @@ class GDSCModelCollection:
         elif model_name.lower() == "fnn":
             model = Sequential(
                     [
-                            Dense(512, input_dim=input_shape, activation='relu'),
+                            Dense(1024, input_dim=input_shape, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.8),
-                            Dense(64, activation='relu'),
+                            Dropout(0.4),
+                            Dense(128, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.8),
+                            Dropout(0.4),
                             Dense(1)
                             # Use sigmoid for multi-label classification
                     ])
             # Compile the model
             model.compile(
-                    optimizer=Adam(learning_rate=0.0005), loss='mse',
+                    optimizer=Adam(learning_rate=0.001), loss='mse',
                     metrics=['mse'])
             model_type = "keras"
         return model, model_type
