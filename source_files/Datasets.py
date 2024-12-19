@@ -709,10 +709,10 @@ class GExMix:
         except:
             print("cant reset_index")
 
-        # mix_ids_pairs = self.generate_balance_indices_for_mixing(
-        #         pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
-        mix_ids_pairs = self.generate_random_indices_for_mixing(
+        mix_ids_pairs = self.generate_balance_indices_for_mixing(
                 pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
+        # mix_ids_pairs = self.generate_random_indices_for_mixing(
+        #         pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
 
         # Generate the mixing pair indices and corresponding weights
         probability_vectors = self.augment_generate_mixing_weights(

@@ -11,6 +11,7 @@ from scipy.stats import spearmanr, pearsonr, ttest_ind, wilcoxon, ttest_rel
 from sklearn.metrics import mean_squared_error, r2_score
 from plotting_utils import generate_dark_colors
 from scipy.cluster.hierarchy import linkage, leaves_list
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
 
 
@@ -102,7 +103,8 @@ def load_csv_and_compute_and_plot_volcano_drug_level():
         plt.title(f'Volcano Plot of {metric}\nOri vs Aug Predictions')
         plt.legend()
         plt.grid(alpha=0.3)
-        plt.show()
+        plt.close()
+
 
 
 def plot_volcano_with_text_adjust(volcano_group_filtered_df, metric, logfc_cutoff=1.5, logp_cutoff=2):
@@ -154,7 +156,7 @@ def plot_volcano_with_text_adjust(volcano_group_filtered_df, metric, logfc_cutof
 
     plt.legend()
     plt.grid(alpha=0.3)
-    plt.show()
+    plt.close()
 
 
 def plot_overall_pred_vs_gt_scatter_with_contour(data_dirs):
@@ -842,7 +844,7 @@ def plot_beta_histograms(alpha_values, num_bins=50, num_points=1000):
     plt.tight_layout()
     plt.savefig(path.join("../ISMB-paper", "beta-histogram.png"))
     plt.savefig(path.join("../ISMB-paper", "beta-histogram.pdf"), format="pdf")
-    plt.show()
+    plt.close()
 
 
 def load_pickle_file(file_path):
@@ -872,7 +874,9 @@ def convert_metrics_to_dataframe(ori_metrics, aug_metrics):
     return pd.concat(coll_metric_ori_w_aug, axis=0)
 
 
-def compute_CV_mean_summary_statistics(coll_metric_ori_w_aug, groupby=['drug', "beta", 'ori_or_aug']):
+def compute_CV_mean_summary_statistics(coll_metric_ori_w_aug,
+                                       metrics_cols=['Spearman Correlation', 'Pearson Correlation', 'R2 Score'],
+                                       groupby=['drug',  'ori_or_aug']):
     """
     Compute the mean and standard deviation of the performance metrics across cross-validation folds.
     :param coll_metric_ori_w_aug:
@@ -880,60 +884,92 @@ def compute_CV_mean_summary_statistics(coll_metric_ori_w_aug, groupby=['drug', "
        'std_pearson', 'mean_r2', 'std_r2']
     :return:
     """
-    return coll_metric_ori_w_aug.groupby(groupby).agg(
-            mean_spearman=('Spearman Correlation', 'mean'),
-            std_spearman=('Spearman Correlation', 'std'),
-            mean_pearson=('Pearson Correlation', 'mean'),
-            std_pearson=('Pearson Correlation', 'std'),
-            mean_r2=('R2 Score', 'mean'),
-            std_r2=('R2 Score', 'std')
-    ).reset_index()
+    agg_dict = {}
+    for metric in metrics_cols:
+        metric_name = metric.split(' ')[0].lower()  # Normalize metric names for column naming
+        agg_dict[f'mean_{metric_name}'] = (metric, 'mean')
+        agg_dict[f'std_{metric_name}'] = (metric, 'std')
+
+    # return coll_metric_ori_w_aug.groupby(groupby).agg(
+    #         mean_spearman=('Spearman Correlation', 'mean'),
+    #         std_spearman=('Spearman Correlation', 'std'),
+    #         mean_pearson=('Pearson Correlation', 'mean'),
+    #         std_pearson=('Pearson Correlation', 'std'),
+    #         mean_r2=('R2 Score', 'mean'),
+    #         std_r2=('R2 Score', 'std')
+    # ).reset_index()
+    return coll_metric_ori_w_aug.groupby(groupby).agg(**agg_dict).reset_index()
 
 
-def compute_improvement(summary_stats):
+def compute_improvement(summary_stats, metrics=['spearman', 'pearson', 'r2']):
+    """
+    Compute the improvement of augmented metrics over original metrics.
+
+    Args:
+        summary_stats (pd.DataFrame): DataFrame with summarized statistics.
+        metrics (list): List of metric names to compute improvements for.
+
+    Returns:
+        pd.DataFrame: DataFrame with computed improvements.
+    """
     improvement = summary_stats.pivot_table(
             index='Drug', columns='ori_or_aug',
-            values=['mean_spearman', 'mean_pearson', 'mean_r2'])
+            values=[f'{metric}' for metric in metrics])
     improvement.columns = ['_'.join(col).strip() for col in improvement.columns.values]
-    improvement['spearman_improvement'] = improvement['mean_spearman_aug'] - improvement[
-        'mean_spearman_ori']
-    improvement['pearson_improvement'] = improvement['mean_pearson_aug'] - improvement[
-        'mean_pearson_ori']
-    improvement['r2_improvement'] = improvement['mean_r2_aug'] - improvement['mean_r2_ori']
+
+    for metric in metrics:
+        improvement[f'{metric}_improvement'] = improvement[f'{metric}_aug'] - improvement[f'{metric}_ori']
+
     improvement['Drug'] = improvement.index
     return improvement
 
 
-def plot_heatmap(improvement, sort_col="spearman_improvement", save_dir="./"):
+def plot_heatmap(improvement, prefix="", sort_col="spearman_improvement", save_dir="./"):
     sort_imp = improvement.sort_values(sort_col, ascending=False)
     plt.figure(figsize=(8, 10))
     sns.heatmap(sort_imp[[sort_col]], annot=True, cmap="coolwarm", center=0)
-    plt.title("Heatmap of Improvement (Aug - Ori)")
+    plt.title(f"Heatmap of Improvement (Aug - Ori)\n{prefix}")
     plt.xlabel("Improvement")
     plt.ylabel("Drug")
     plt.tight_layout()
-    plt.savefig(path.join(save_dir, f"0-heatmap_improvement_{len(improvement)}drugs.png"))
-    plt.show()
+    plt.savefig(path.join(save_dir, f"0-{prefix}-heatmap_improvement_{len(improvement)}drugs.png"))
+    plt.close()
 
 
-def plot_facetgrid(grouped, sort_improvement_df, top=True, save_dir="./"):
-    drugs = sort_improvement_df["Drug"].unique()[:10] if top else sort_improvement_df[
-                                                                      "Drug"].unique()[-10:]
+def plot_facetgrid(grouped, sort_improvement_df, prefix="", top=True, selectK=5, save_dir="./"):
+    # Select top or bottom improved drugs
+    drugs = sort_improvement_df["Drug"].unique()[:selectK] if top else sort_improvement_df[
+                                                                           "Drug"].unique()[
+                                                                       -selectK:]
     subset = grouped[grouped["Drug"].isin(drugs)]
-    title = "Top 10 improved drugs" if top else "Bottom 10 worsened drugs"
+
+    title = f"Top {selectK} improved drugs" if top else f"Bottom {selectK} worsened drugs"
+
+    # Create the catplot
     g = sns.catplot(
             data=subset,
             x="Drug", y="mean_score", hue="ori_or_aug", col="metric",
-            kind="bar", ci="sd", col_wrap=2, height=4, aspect=1.5
+            kind="bar", ci="sd", col_wrap=2, height=3, aspect=1.5, sharex=False, sharey=False
     )
-    # Remove the legend for hue
-    g._legend.remove()
+    # g.set_xticklabels(["Men", "Women", "Children"])
+    # Rotate x-tick labels for all subplots
+    for ax in g.axes.flat:
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+        ax.grid(alpha=0.3)
+
+    # Remove the FacetGrid legend (if not needed)
+    if g._legend:
+        g._legend.remove()
+
+    # Add a custom legend (optional)
+    plt.legend(title="Type", bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0.)
+
+    # Set subplot titles and adjust layout
     g.set_titles(title + " {col_name}")
-    g.set_xticklabels(rotation=45, ha="right")
-    plt.legend(bbox_to_anchor=[0.8, 0.95])
     plt.tight_layout()
-    plt.savefig(path.join(save_dir, f"0-{title}.png"))
-    plt.show()
+
+    plt.savefig(path.join(save_dir, f"0-{prefix}-{title}-select{selectK}.png"))
+    plt.close()
 
 
 def compute_log_fold_change_and_paired_t_tests(summary_stats):
@@ -959,7 +995,7 @@ def compute_log_fold_change_and_paired_t_tests(summary_stats):
     return pivoted
 
 
-def plot_slope_chart(summary_stats, column="ori_or_aug", value2plot="mean_spearman", save_dir="./"):
+def plot_slope_chart(summary_stats, column="ori_or_aug", prefix="case_name", value2plot="mean_spearman", save_dir="./"):
     pivot_df = summary_stats.pivot(
             index='Drug', columns=column, values=value2plot).reset_index()
     plt.figure(figsize=(8, 6))
@@ -975,13 +1011,13 @@ def plot_slope_chart(summary_stats, column="ori_or_aug", value2plot="mean_spearm
                     alpha=0.5)
     plt.scatter(['ori'] * len(pivot_df), pivot_df['ori'], color='blue', label='Ori', zorder=3)
     plt.scatter(['aug'] * len(pivot_df), pivot_df['aug'], color='orange', label='Aug', zorder=3)
-    plt.title(f"Slope Chart: {value2plot.capitalize()}", fontsize=14)
+    plt.title(f"Slope Chart: {value2plot.capitalize()}\n{prefix}", fontsize=14)
     plt.ylabel(f"{value2plot.capitalize()}", fontsize=12)
     plt.xticks(['ori', 'aug'], labels=['Original (Ori)', 'Augmented (Aug)'], fontsize=12)
     plt.legend(title="Data Type")
     plt.tight_layout()
-    plt.savefig(path.join(save_dir, f"0-slope_chart_{value2plot}.png"))
-    plt.show()
+    plt.savefig(path.join(save_dir, f"0-{prefix}-slope_chart_{value2plot}.png"))
+    plt.close()
 
 """
 lookup_drugs = ["Nilotinib", "Tanespimycin", "PHA-665752", "Lapatinib", "Nutlin-3a", "Saracatinib", 
@@ -1091,28 +1127,28 @@ def load_analyze_plot_metrics_of_one_folder(file_fomat="pickle"):
             mean_score=("score", "mean"),
             std_score=("score", "std")
     ).reset_index()
-    plot_heatmap(drug_mean_metric_improvement, sort_col="spearman_improvement", save_dir=aug_data_dir)
+    plot_heatmap(drug_mean_metric_improvement, sort_col="spearman_improvement", prefix="", save_dir=aug_data_dir)
     plot_facetgrid(
             drug_mean_std_metrics_long, drug_mean_metric_improvement.sort_values("spearman_improvement", ascending=False),
-            top=True, save_dir=aug_data_dir)
+            top=True, prefix="", save_dir=aug_data_dir)
     plot_facetgrid(
             drug_mean_std_metrics_long, drug_mean_metric_improvement.sort_values("spearman_improvement", ascending=False),
-            top=False, save_dir=aug_data_dir)
+            top=False, prefix="", save_dir=aug_data_dir)
     drug_mean_logfc_p_df = compute_log_fold_change_and_paired_t_tests(drug_cv_metric_mean_stats)
-    plot_slope_chart(drug_cv_metric_mean_stats, column="ori_or_aug", value2plot="mean_spearman", save_dir=aug_data_dir)
+    plot_slope_chart(drug_cv_metric_mean_stats, column="ori_or_aug", prefix="", value2plot="mean_spearman", save_dir=aug_data_dir)
 
     ## melt results_df for plotting
     melt_results_df = results_df.melt(
         id_vars=["Drug", "ori_or_aug", "Diagnosis", "Sample count"],
         value_vars=["Spearman Correlation", "Pearson Correlation", "R2 Score"],
         var_name="metric", value_name="score")
-    plot_boxstripplot_ori_and_aug_overall_drugs(melt_results_df, metric="mean_pearson", y_col="score")
+    plot_boxstripplot_ori_and_aug_overall_drugs(melt_results_df, metric="mean_pearson", prefix="", y_col="score", save_dir=aug_data_dir)
 
     compute_p_values_paired_metrics(drug_cv_metric_mean_stats)
 
 
 def plot_boxstripplot_ori_and_aug_overall_drugs(plot_df, metric="mean_pearson", y_col="score",
-                                                save_dir="./"):
+                                                prefix="", save_dir="./"):
     plt.figure(figsize=(8, 6))
     plot_df = plot_df[plot_df["metric"] == metric]
     sns.boxplot(data=plot_df, x='ori_or_aug', y=y_col, palette='Set2', width=0.5)
@@ -1139,18 +1175,19 @@ def plot_boxstripplot_ori_and_aug_overall_drugs(plot_df, metric="mean_pearson", 
                 (x1 + x2) / 2, y_max + 0.5, f'{sig_str}', ha='center', va='bottom', fontsize=12)
 
     # Customize the plot
-    plt.title("Comparison of Ori and Aug Drugs", fontsize=14)
+    plt.title(f"Comparison of Ori and Aug Drugs\n{prefix}", fontsize=14)
     plt.ylabel("Metric Mean", fontsize=12)
     plt.xlabel("Condition", fontsize=12)
     plt.xticks(fontsize=12)
-    plt.savefig(path.join(save_dir, f"0-{metric}_ori_vs_aug_stripboxplot.png"))
     plt.tight_layout()
+    plt.savefig(path.join(save_dir, f"0-{prefix}-{metric}_ori_vs_aug_stripboxplot.png"))
+    plt.close()
 
 
 
 def compute_p_values_paired_metrics(drug_cv_metric_mean_stats):
     pivot_paired_metrics_df = drug_cv_metric_mean_stats.pivot_table(
-            index='drug', columns='ori_or_aug', values=['mean_spearman', 'mean_pearson', 'mean_r2'])
+            index='Drug', columns='ori_or_aug', values=['mean_spearman', 'mean_pearson', 'mean_r2'])
     # Perform paired t-tests
     t_stat_spearman, p_val_spearman = ttest_rel(
             pivot_paired_metrics_df['mean_spearman']['aug'],
@@ -1236,12 +1273,12 @@ def generate_pickle_with_L1000_genes():
         pickle.dump(ccle_norm_data, handle)
 
 
-def load_saved_TCGA_drug_response_get_visualization():
+def load_saved_TCGA_model_summary_get_visualization():
     """
     Load saved drug response data from GDSC to TCGA and visualize
     :return:
     """
-    data_dir = r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\GDSC-aug-with-TCGA\12-18T20-30-GDSC_TCGA"
+    data_dir = r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\GDSC-aug-with-TCGA\12-19T10-49-GDSC+TCGA_TCGA_beta0.6_num50"
     files = glob(path.join(data_dir, "*summary.csv"))
     # Rewriting the process to calculate p-values and generate a volcano plot correctly
 
@@ -1291,9 +1328,158 @@ def load_saved_TCGA_drug_response_get_visualization():
         plt.tight_layout()
         plt.savefig(fr"{data_dir}\{model_name}mean_accuracy_by_drug_and_data_type.png")
 
+
+def post_hoc_classification_metrics(ground_truth, predictions, thresholds=[0.25, 0.75]):
+    """
+    Evaluate post hoc classification performance metrics for continuous predictions.
+
+    Args:
+        predictions (np.array): Continuous predictions.
+        ground_truth (np.array): Discrete ground truth values (e.g., 0, 0.5, 1).
+        thresholds (list): Thresholds for mapping continuous predictions to discrete classes.
+
+    Returns:
+        dict: Dictionary of performance metrics.
+    """
+    # Map predictions to discrete classes using thresholds
+    # ground_truth = filtered_group['ground_truth']
+    # predictions = filtered_group['prediction']
+    # thresholds = [0.25, 0.75]
+    # Map predictions to discrete classes using thresholds
+    discrete_predictions = np.digitize(predictions, bins=thresholds)
+    class_mapping = {0: 0, 1: 0.5, 2: 1}  # Map indices to discrete classess
+    discrete_predictions2 = np.vectorize(class_mapping.get)(discrete_predictions)
+
+    discrete_ground_truth = np.digitize(ground_truth, bins=thresholds)
+    discrete_ground_truth2 = np.vectorize(class_mapping.get)(discrete_ground_truth)
+    ### Compute classification metrics
+    accuracy = np.mean(discrete_predictions == discrete_ground_truth)
+    precision = precision_score(
+            discrete_ground_truth, discrete_predictions, average='weighted', zero_division=0)
+    recall = recall_score(
+        discrete_ground_truth, discrete_predictions, average='weighted', zero_division=0)
+    f1 = f1_score(discrete_ground_truth, discrete_predictions, average='weighted', zero_division=0)
+    confusion = confusion_matrix(discrete_ground_truth, discrete_predictions)
+    #### Compute classification metrics Compute regression-like metrics (MSE, MAE)
+    mse = np.mean((predictions - ground_truth) ** 2)
+    mae = np.mean(np.abs(predictions - ground_truth))
+    # Combine all metrics
+    metrics = {
+            "Accuracy": accuracy,
+            "Precision": precision,
+            "Recall": recall,
+            "F1-Score": f1,
+            "Confusion Matrix": confusion.tolist(),
+            "MSE": mse,
+            "MAE": mae
+    }
+
+    return metrics
+
+def load_TCGA_saved_predictons_get_vis():
+    data_dir = r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\GDSC-aug-with-TCGA\12-19T10-49-GDSC+TCGA_TCGA_beta0.6_num50"
+    aug_files = glob(path.join(data_dir, "*pred_gt_meta*csv"))
+    coll_processed_data = []
+    # for case_data in (aug_files):
+    #     case_processed_data = []
+    #     if len(case_data) > 0:
+    for file in aug_files:
+        data = pd.read_csv(file)
+        case_name = path.basename(data_dir).split("-")[-1]
+        grouped = data.groupby(['diagnosis', 'Drug', "ori_or_aug"])
+        # Compute the sample count for each group in grouped
+        sample_counts = data.groupby(['diagnosis', 'Drug']).size().reset_index(
+                name='Sample count')
+        file_processed_data = []
+        for (diagnosis, drug, ori_or_aug), group in grouped:
+            filtered_group = group.dropna(subset=['ground_truth', 'prediction'])
+            if len(filtered_group) < 2:
+                continue
+
+            print(
+                    f"Processing: Diagnosis={diagnosis}, Drug={drug}, Sample count={filtered_group.shape[0]}")
+            reg_metrics = compute_metrics(
+                    filtered_group['ground_truth'], filtered_group['prediction'])
+            clf_metrics = post_hoc_classification_metrics(
+                    filtered_group['ground_truth'], filtered_group['prediction'])
+            # Retrieve the sample count for the current diagnosis and drug
+            sample_count = sample_counts[
+                (sample_counts['diagnosis'] == diagnosis) & (sample_counts['Drug'] == drug)
+                ]['Sample count'].values[0]  # Use `.values[0]` to extract the scalar value
+            file_processed_data.append(
+                    {
+                            "Drug": drug,
+                            "ori_or_aug": ori_or_aug,
+                            "Drug (cancer count)": f"{drug} ({sample_count})",
+                            "TCGA Classification": diagnosis,
+                            "Diagnosis": diagnosis,
+                            "Sample count": sample_count,
+                            **clf_metrics,  # Unpack the dictionary directly
+                            **reg_metrics,  # Unpack the dictionary directly
+                    })
+        case_processed_data_df = pd.DataFrame(file_processed_data).reset_index()
+        coll_processed_data.append(case_processed_data_df)
+    coll_processed_data_df = pd.concat(coll_processed_data, axis=0).reset_index()
+
+    plt.figure()
+    sns.boxplot(coll_processed_data_df, x="Drug", y="F1-Score", hue="ori_or_aug")
+    plt.xticks(rotation=45, ha="right")
+
+    plt.figure()
+    sns.boxplot(coll_processed_data_df, x="Drug", y="F1-Score", hue="Diagnosis")
+    plt.xticks(rotation=45, ha="right")
+    plt.legend(bbox_to_anchor=[1.02, 1])
+    plt.tight_layout()
+
+
+    drug_cv_metric_mean_stats = compute_CV_mean_summary_statistics(
+            coll_processed_data_df, metrics_cols=['Accuracy', 'Precision', 'Recall', 'F1-Score',
+                                                  "Spearman Correlation", "Pearson Correlation", "R2 Score"],
+            groupby=['Drug', 'ori_or_aug'])
+    """['mean_pearson_aug', 'mean_pearson_ori',..., 'Drug']"""
+    drug_mean_metric_improvement = compute_improvement(
+        drug_cv_metric_mean_stats,
+        metrics=[ele for ele in
+                 drug_cv_metric_mean_stats.columns if
+                 "mean" in ele])
+    # Melt the dataframe for long-form representation for plotting
+    plot_df = drug_cv_metric_mean_stats.melt(
+            id_vars=["Drug", "ori_or_aug"],
+            value_vars=[ele for ele in drug_cv_metric_mean_stats.columns if
+                        "mean" in ele],
+            var_name="metric", value_name="score")  ## ['Drug', 'ori_or_aug', 'metric', 'score']
+    #
+    drug_mean_std_metrics_long = plot_df.groupby(["Drug", "ori_or_aug", "metric"]).agg(
+            mean_score=("score", "mean"),
+            std_score=("score", "std")
+    ).reset_index()
+    plot_heatmap(
+            drug_mean_metric_improvement, prefix=case_name, sort_col="mean_accuracy_improvement",
+            save_dir=data_dir)
+    plot_facetgrid(
+            drug_mean_std_metrics_long,
+            drug_mean_metric_improvement.sort_values("mean_accuracy_improvement", ascending=False),
+            top=True, prefix=case_name, save_dir=data_dir)
+    plot_facetgrid(
+            drug_mean_std_metrics_long,
+            drug_mean_metric_improvement.sort_values("mean_accuracy_improvement", ascending=False),
+            top=False, prefix=case_name, save_dir=data_dir)
+    drug_mean_logfc_p_df = compute_log_fold_change_and_paired_t_tests(drug_cv_metric_mean_stats)
+    plot_slope_chart(
+            drug_cv_metric_mean_stats, column="ori_or_aug", prefix=case_name, value2plot="mean_accuracy",
+            save_dir=data_dir)
+    ## melt results_df for plotting
+    melt_results_df = coll_processed_data_df.melt(
+            id_vars=["Drug", "ori_or_aug", "Diagnosis", "Sample count"],
+            value_vars=["Spearman Correlation", "Pearson Correlation", "R2 Score"],
+            var_name="metric", value_name="score")
+    plot_boxstripplot_ori_and_aug_overall_drugs(
+            plot_df, metric="mean_f1-score", y_col="score", save_dir=data_dir)
+    compute_p_values_paired_metrics(drug_cv_metric_mean_stats)
+
 if __name__ == '__main__':
 
-    plot_mode = "visualize_metrics_across_folders"
+    plot_mode = "load_saved_TCGA_drug_response_get_visualization"
     if plot_mode == "load_saved_file_for_performance_volcano_drugs":
         load_csv_and_compute_and_plot_volcano_drug_level()
     elif plot_mode == "load_saved_file_for_performance_volcano_group":
@@ -1308,5 +1494,7 @@ if __name__ == '__main__':
         visualize_metrics_across_folders()
     elif plot_mode == "load_analyze_plot_metrics_of_one_folder":
         load_analyze_plot_metrics_of_one_folder()
+    elif plot_mode == "load_saved_TCGA_drug_response_get_visualization":
+        load_saved_TCGA_model_summary_get_visualization()
 
 

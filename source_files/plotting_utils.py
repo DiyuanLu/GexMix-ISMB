@@ -1304,7 +1304,7 @@ def visualize_data_with_meta(features, meta_data_df, meta2check=[], if_color_gra
         n_cols = np.int32(np.ceil(np.sqrt(len(meta2check))))
         n_rows = np.int32(np.ceil(len(meta2check) / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=[max(10, 5 * len(meta2check)), 6])
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=[max(10, 5 * n_cols), max(4.7*n_rows, 8)])
     # Flatten the axes if it's not already a 1D array (in the case of a single plot)
     if n_rows * n_cols == 1:
         axes = [axes]  # Convert single axis to a list to be consistent with axes.flatten()
