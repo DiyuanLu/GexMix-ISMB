@@ -445,26 +445,28 @@ def visualize_metrics_across_folders():
         }
 
     data_dirs = [
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-13T02-01_beta0.1_6clsZ",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-13T02-01_beta0.5_6clsZ",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-13T02-01_beta1.0_6clsZ",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-13T02-01_beta2.0_6clsZ",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-13T02-01_beta4.0_6clsZ",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-12T15-34_aug20_6clsZ_beta2",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-12T15-34_aug50_6clsZ_beta2",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-12T15-34_aug100_6clsZ_beta2",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-12T15-34_aug200_6clsZ_beta2",
-            # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-12T15-34_aug400_6clsZ_beta2",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta0.1",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta0.5",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta1.0",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta2.0",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta4.0",
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-16T17-41_TCGA _aug50_beta5.0",
+           # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           # r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T20"
+           # r"-15_fnn_beta0.5_Rand_aug500",
+           # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           # r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T20"
+           # r"-15_fnn_beta1.0_Rand_aug500",
+           # r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           # r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T20"
+           # r"-15_fnn_beta2.0_Rand_aug500",
+           r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T19"
+           r"-48_fnn_beta0.5_6zsco_aug100",
+           r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T19"
+           r"-48_fnn_beta1.0_6zsco_aug100",
+           r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+           r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-18T19"
+           r"-48_fnn_beta2.0_6zsco_aug100",
     ]
 
     file_pattern = "No*.csv"
-    extract_label = "beta"
+    extract_label = "Num2aug"
     result_data = []
     num2aug = 50
     for jj, data_dir in enumerate(data_dirs):
@@ -472,8 +474,8 @@ def visualize_metrics_across_folders():
             ori_data, aug_data = load_saved_pred_gt_files(data_dir, file_pattern)
         else:
             _, aug_data = load_saved_pred_gt_files(data_dir, file_pattern)
-        param = np.float32(path.basename(data_dir).split('_')[-1].split("beta")[-1])
-        # param = np.int32(path.basename(data_dir).split('_')[-3].split("aug")[-1])
+        param = np.float32(path.basename(data_dir).split('_')[-3].split("beta")[-1])
+        # param = np.int32(path.basename(data_dir).split('_')[-1].split("aug")[-1])
         for case, case_data in zip(["ori", "aug"], [ori_data, aug_data]):
             prefix = "DA with " + str(param) if case == "aug" else "No DA"
             # Compute metrics grouped by drug and cancer type
@@ -1174,9 +1176,124 @@ def compute_p_values_paired_metrics(drug_cv_metric_mean_stats):
     print(f"R2 Score Wilcoxon: p-value={wilcoxon_r2.pvalue:.3e}")
 
 
+## generate pickle dataset with shared genes between L1000 and TCGA/CCLE
+def generate_pickle_with_L1000_genes():
+    L1000_df = pd.read_csv(
+        r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\data\GSE92742_Broad_LINCS_gene_info.txt",
+        sep="\t")
+    L1000_genes = L1000_df[L1000_df["pr_is_lm"] == 1]["pr_gene_symbol"]
+    with open(
+            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\data\tcga_10374_5000_std.pickle",
+            "rb") as file:
+        related_labels_dict = pickle.load(file)
+        tcga_meta_data = related_labels_dict["meta"]
+    tcga_data = pd.read_csv(
+        r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\1-pancan_subtyping\data\1_filter_CCLE_with_TCGA\filtered_TCGA_with_shared_gene_between_CCLE_10374_17713.csv")
+    tcga_data.index = tcga_data["Unnamed: 0"]
+    shared_genes_tcga = set(tcga_data.columns).intersection(set(L1000_genes))
+    combined_norm_data = {}
+    combined_norm_data["rnaseq"] = tcga_data[list(shared_genes_tcga)]
+    combined_norm_data["meta"] = tcga_meta_data
+    with open(
+            f"../data/tcga_{len(tcga_data)}_{len(shared_genes_tcga)}_L1000.pickle", "wb") as handle:
+        pickle.dump(combined_norm_data, handle)
+
+    ### CCLE
+    with open(
+            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\data\ccle_1248_5000_std.pickle",
+            "rb") as file:
+        related_labels_dict = pickle.load(file)
+        ccle_meta_data = related_labels_dict["meta"]
+        ccle_gex_data = related_labels_dict["rnaseq"]
+
+    ccle_data = pd.read_csv(
+        r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\1-pancan_subtyping\data\1_filter_CCLE_with_TCGA\filtered_CCLE_with_shared_gene_between_TCGA_1248_17713_renameCol.csv")
+    shared_genes_ccle = set(ccle_data.columns).intersection(set(L1000_genes))
+    ccle_norm_data = {}
+    ccle_norm_data["rnaseq"] = ccle_data[list(shared_genes_tcga)]
+    ccle_norm_data["meta"] = ccle_meta_data
+    with open(
+            f"../data/ccle_{len(ccle_data)}_{len(shared_genes_tcga)}_L1000.pickle",
+            "wb") as handle:
+        pickle.dump(ccle_norm_data, handle)
+
+    ### GDSC
+    with open(
+            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\data\GDSC_drug_response\GDSC_gex_w_filtered_meta_(959, 19434)_processed9.pickle",
+            "rb") as file:
+        related_labels_dict = pickle.load(file)
+        gdsc_meta_data = related_labels_dict["meta"]
+        gdsc_gex_data = related_labels_dict["rnaseq"]
+    shared_genes_gdsc = set(gdsc_gex_data.columns).intersection(set(L1000_genes))
+
+    shared_genes_ccle_gdsc = list(shared_genes_ccle.intersection(shared_genes_gdsc))
+    gdsc_norm_data = {}
+    gdsc_norm_data["rnaseq"] = ccle_data[list(shared_genes_ccle_gdsc)]
+    gdsc_norm_data["meta"] = ccle_meta_data
+    with open(
+            f"../data/ccle_{len(ccle_data)}_{len(shared_genes_ccle_gdsc)}_L1000.pickle",
+            "wb") as handle:
+        pickle.dump(ccle_norm_data, handle)
+
+
+def load_saved_TCGA_drug_response_get_visualization():
+    """
+    Load saved drug response data from GDSC to TCGA and visualize
+    :return:
+    """
+    data_dir = r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\GDSC-aug-with-TCGA\12-18T20-30-GDSC_TCGA"
+    files = glob(path.join(data_dir, "*summary.csv"))
+    # Rewriting the process to calculate p-values and generate a volcano plot correctly
+
+    aug_data = []
+    for file in files:
+        data = pd.read_csv(file)
+        aug_data.append(data)
+    aug_data_df = pd.concat(aug_data)
+
+    # save_dir2 = path.dirname(filename)
+    # loaded_all_drug_data = pd.read_csv(filename)
+    for model_name in aug_data_df["model_name"].unique():
+        fnn_df = aug_data_df[aug_data_df["model_name"] == model_name]
+        # Group by drug and original/augment to calculate mean accuracy
+        grouped_data = fnn_df.groupby(['drug', 'ori_or_aug'])['accuracy'].agg(
+                ['mean', 'std']).reset_index()
+        # Add improvement (augment - original)
+        original_acc = grouped_data[grouped_data['ori_or_aug'] == 'original']
+        augment_acc = grouped_data[grouped_data['ori_or_aug'] == 'augment']
+        improvement = augment_acc.set_index('drug')['mean'] - original_acc.set_index('drug')['mean']
+        grouped_data['improvement'] = grouped_data['drug'].map(improvement)
+        # Create a barplot with error bars
+        plt.figure(figsize=(14, 8))
+        sns.barplot(
+                data=grouped_data,
+                x='drug',
+                y='mean',
+                hue='ori_or_aug',
+                palette='pastel',
+                ci="sd",
+        )
+        # Add error bars
+        for index, row in grouped_data.iterrows():
+            plt.errorbar(
+                    x=index // 2 + (0.2 if row['ori_or_aug'] == 'ori' else -0.2),
+                    y=row['mean'],
+                    yerr=row['std'],
+                    fmt='none',
+                    capsize=5,
+                    color='black'
+            )
+        plt.title(f'Mean Accuracy per drug ({model_name})\nTCGA -> TCGA')
+        plt.ylabel('Mean Accuracy')
+        plt.xlabel('Drug')
+        plt.xticks(rotation=45, ha="right")
+        plt.legend(title='Data Type')
+        plt.tight_layout()
+        plt.savefig(fr"{data_dir}\{model_name}mean_accuracy_by_drug_and_data_type.png")
+
 if __name__ == '__main__':
 
-    plot_mode = "compute_and_plot_metrics_in_one_folder"
+    plot_mode = "visualize_metrics_across_folders"
     if plot_mode == "load_saved_file_for_performance_volcano_drugs":
         load_csv_and_compute_and_plot_volcano_drug_level()
     elif plot_mode == "load_saved_file_for_performance_volcano_group":
@@ -1189,7 +1306,7 @@ if __name__ == '__main__':
         plot_overall_pred_vs_gt_scatter_with_contour(data_dir)
     elif plot_mode == "visualize_metrics_across_folders":
         visualize_metrics_across_folders()
-    elif plot_mode == "compute_and_plot_metrics_in_one_folder":
-        compute_and_plot_metrics_in_one_folder()
+    elif plot_mode == "load_analyze_plot_metrics_of_one_folder":
+        load_analyze_plot_metrics_of_one_folder()
 
 

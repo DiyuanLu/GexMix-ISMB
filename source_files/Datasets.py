@@ -13,6 +13,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from glob import glob
+from sklearn.preprocessing import OneHotEncoder
+
 
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from scipy.stats import pearsonr, spearmanr
@@ -39,8 +41,8 @@ def get_filename_dict():
                     #      "meta_filename":
                     #      '../data/1_filter_CCLE_with_TCGA/final-resorted-samples-based-HiSeqV2
                     #      -new.csv'},
-                    "filename": '../data/tcga_10374_5000_std.pickle',
-                    "meta_filename": '../data/tcga_10374_5000_std.pickle',
+                    "filename": '../data/tcga_10374_924_L1000.pickle',
+                    "meta_filename": '../data/tcga_10374_924_L1000.pickle',
                     "drug_response":
                         "../data/GDSC_drug_response/all_clin_XML_curated_annotation_matched_v1_alex.csv"
             },
@@ -50,17 +52,19 @@ def get_filename_dict():
                     # "meta_filename":
                     # '../data/1_filter_CCLE_with_TCGA/CCLE_sample_info_with_imputed_TCGA_labels_and_unified_site_names_step3_1248.csv'},
 
-                    "filename": '../data/ccle_1248_5000_std.pickle',
-                    "meta_filename": '../data/ccle_1248_5000_std.pickle'
+                    "filename": '../data/ccle_1248_924_L1000.pickle',
+                    "meta_filename": '../data/ccle_1248_924_L1000.pickle'
             },
             "GDSC": {
-                    "filename": r"..\data\GDSC_drug_response\GDSC_gex_w_filtered_meta_(959, 19434)_processed9.pickle",
-                    "meta_filename": r"..\data\GDSC_drug_response\GDSC_gex_w_filtered_meta_(959, 19434)_processed9.pickle"},
+                    "filename": r"..\data\GDSC_drug_response\GDSC_L1000_gex_w_filtered_meta_(959, 924)_processed9.pickle",
+                    "meta_filename": r"..\data\GDSC_drug_response\GDSC_L1000_gex_w_filtered_meta_(959, 924)_processed9.pickle"},
             "combat_3":{
                     # "filename": r"../data/GDSC_drug_response/combat_site+diag_TCGA+GDSC+CCLE_3.pickle",
                     # "meta_filename": r"../data/GDSC_drug_response/combat_site+diag_TCGA+GDSC+CCLE_3.pickle",../results/GDSC-RES\combat_site+diag_3sets_dataset+site_3.pickle
-                    "filename": r"..\data\GDSC_drug_response\combat_site+diag_3sets_dataset+site_3.pickle",
-                    "meta_filename": r"..\data\GDSC_drug_response\combat_site+diag_3sets_dataset+site_3.pickle",
+                    # "filename": r"..\data\GDSC_drug_response\combat_site+diag_3sets_dataset+site_3.pickle",
+                    # "meta_filename": r"..\data\GDSC_drug_response\combat_site+diag_3sets_dataset+site_3.pickle",
+                    "filename": r"..\data\GDSC_drug_response\combat_onlysite_TCGA+GDSC+CCLE_dataset_(12581, 924)_L1000.pickle",
+                    "meta_filename": r"..\data\GDSC_drug_response\combat_onlysite_TCGA+GDSC+CCLE_dataset_(12581, 924)_L1000.pickle",
             }
 
     }
@@ -171,8 +175,8 @@ class GExDataset():
                 # already presaved all together in pickle
                 with open(self.data_filename, "rb") as f:
                     pickle_data = pickle.load(f)
-                    self.gex_data = pickle_data["rnaseq"]
-                    self.meta_data = pickle_data["meta"]
+                    self.gex_data = pickle_data["rnaseq"].reset_index(drop=True)
+                    self.meta_data = pickle_data["meta"].reset_index(drop=True)
                     self.meta_data["diagnosis"] = np.array(self.meta_data["diagnosis"]).astype(str)
 
                     if "dataset_name" not in self.meta_data.columns:
@@ -686,6 +690,7 @@ class GExMix:
     def augment_random(self, aug_by_column: str, target_features=None,
                        target_label_dict=None, if_stratify=False, num2aug=200, random_state=99,
                        keys4mix=["tcga_hot_labels", "tumor_percent", "normal_percent"],
+                       keys4mix_onehot=["binary_response"],
                        if_include_original=True, save_dir="./"):
         """
         given a target class, to use either a specific class or random classes to augment it.
@@ -695,7 +700,7 @@ class GExMix:
         :param target_label: int
         :param num2aug: int
         :param num2mix: int
-        :return:
+        :return:keys4mix_onehot
         """
         full_feature = target_features
         try:
@@ -704,10 +709,10 @@ class GExMix:
         except:
             print("cant reset_index")
 
-        mix_ids_pairs = self.generate_balance_indices_for_mixing(
-                pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
-        # mix_ids_pairs = self.generate_random_indices_for_mixing(
+        # mix_ids_pairs = self.generate_balance_indices_for_mixing(
         #         pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
+        mix_ids_pairs = self.generate_random_indices_for_mixing(
+                pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
 
         # Generate the mixing pair indices and corresponding weights
         probability_vectors = self.augment_generate_mixing_weights(
@@ -731,7 +736,7 @@ class GExMix:
         mixed_features, mixed_labels_dict = self.update_mixed_features_and_label_dict(
                 valid_mix_pairs,
                 mixed_labels_dict, valid_probability_vectors, full_feature,
-                target_label_dict, keys4mix=keys4mix)
+                target_label_dict, keys4mix=keys4mix, keys4mix_onehot=keys4mix_onehot)
 
         if if_include_original:
             mixed_features = np.concatenate((full_feature, mixed_features), axis=0)
@@ -938,33 +943,114 @@ class GExMix:
     # TODO: perform DA per cancer type, per data source
     def update_mixed_features_and_label_dict(self, mix_ids_pairs, mixed_labels_dict,
                                              probability_vectors, all_feature, label_dict,
-                                             keys4mix=["tcga_hot_labels", "source_labels"]):
+                                             keys4mix=["tcga_hot_labels", "source_labels"],
+                                             keys4mix_onehot=[]):
         mixed_features = np.zeros((probability_vectors.shape[0], all_feature.shape[1]))
+
+        if len(keys4mix_onehot) > 0:
+            # Initialize OneHotEncoder (sparse=False ensures it returns a dense array)
+            encoder = OneHotEncoder(sparse=False)
 
         for idx in range(self.num2mix):
             mixed_features += np.multiply(
                     all_feature[mix_ids_pairs[:, idx]],
                     probability_vectors[:, idx][:, np.newaxis])
+            # Mix labels
             for key in keys4mix:
                 if key in self.array_keys:
-                    # Create mixed labels using the same mix factors
-                    if len(label_dict[key].shape) == 2:
-                        mixed_labels_dict[key] += np.multiply(
-                                label_dict[key][mix_ids_pairs[:, idx]].values,
-                                probability_vectors[:, idx][:, np.newaxis])
-                    elif len(label_dict[key].shape) == 1:
-                        print(f"{idx}, {key}")
-                        mixed_labels_dict[key] += np.multiply(
-                                label_dict[key][mix_ids_pairs[:, idx]].values,
-                                probability_vectors[:, idx])
+                    # Check if the key requires one-hot encoding
+                    if key in keys4mix_onehot:
+                        # Handle one-hot encoded labels
+                        if len(label_dict[key].shape) == 2:
+                            mixed_labels_dict[key] += np.multiply(
+                                    label_dict[key][mix_ids_pairs[:, idx]].values,
+                                    probability_vectors[:, idx][:, np.newaxis]
+                            )
+                        elif len(label_dict[key].shape) == 1:
+                            # One-hot encode the labels
+                            encoded_labels = encoder.fit_transform(label_dict[key].values.reshape(-1, 1))
+                            mixed_labels_dict[key] += np.multiply(
+                                    encoded_labels[mix_ids_pairs[:, idx]],
+                                    probability_vectors[:, idx][:, np.newaxis]
+                            )
+
+                    else:
+                        # Handle non-one-hot encoded labels
+                        if len(label_dict[key].shape) == 1:
+                            mixed_labels_dict[key] += np.multiply(
+                                    label_dict[key][mix_ids_pairs[:, idx]].values,
+                                    probability_vectors[:, idx]
+                            )
+                        elif len(label_dict[key].shape) == 2:
+                            raise ValueError(
+                                f"Key '{key}' is not specified for one-hot encoding but is 2D.")
+        # for idx in range(self.num2mix):
+        #     mixed_features += np.multiply(
+        #             all_feature[mix_ids_pairs[:, idx]],
+        #             probability_vectors[:, idx][:, np.newaxis])
+        #     for key in keys4mix:
+        #         if key in self.array_keys:
+        #             # Create mixed labels using the same mix factors
+        #             if len(label_dict[key].shape) == 2:
+        #                 mixed_labels_dict[key] += np.multiply(
+        #                         label_dict[key][mix_ids_pairs[:, idx]].values,
+        #                         probability_vectors[:, idx][:, np.newaxis])
+        #             elif len(label_dict[key].shape) == 1:
+        #                 print(f"{idx}, {key}")
+        #                 mixed_labels_dict[key] += np.multiply(
+        #                         label_dict[key][mix_ids_pairs[:, idx]].values,
+        #                         probability_vectors[:, idx])
 
         # For string labels, simply take the majority label
         for str_key in self.string_keys:
             mixed_labels_dict[str_key] += list(label_dict[str_key][mix_ids_pairs[:, 0]])
             mixed_labels_dict[str_key] = np.array(mixed_labels_dict[str_key])
 
-
         return mixed_features, mixed_labels_dict
+
+
+    def update_mixed_features_and_label_dict_onehot(self, mix_ids_pairs, mixed_labels_dict,
+                                             probability_vectors, all_feature, label_dict,
+                                             keys4mix=["tcga_hot_labels", "source_labels"],
+                                                    keys4mix_onehot=["tcga_hot_labels"]):
+        mixed_features = np.zeros((probability_vectors.shape[0], all_feature.shape[1]))
+
+        # Iterate through each mix
+        for idx in range(self.num2mix):
+            mixed_features += np.multiply(
+                    all_feature[mix_ids_pairs[:, idx]],
+                    probability_vectors[:, idx][:, np.newaxis]
+            )
+
+            # Mix labels
+            for key in keys4mix:
+                if key in self.array_keys:
+                    # Check if the key requires one-hot encoding
+                    if key in keys4mix_onehot:
+                        # Handle one-hot encoded labels
+                        if len(label_dict[key].shape) == 2:
+                            mixed_labels_dict[key] += np.multiply(
+                                    label_dict[key][mix_ids_pairs[:, idx]].values,
+                                    probability_vectors[:, idx][:, np.newaxis]
+                            )
+                        elif len(label_dict[key].shape) == 1:
+                            raise ValueError(
+                                f"Key '{key}' is specified for one-hot encoding but is not 2D.")
+                    else:
+                        # Handle non-one-hot encoded labels
+                        if len(label_dict[key].shape) == 1:
+                            mixed_labels_dict[key] += np.multiply(
+                                    label_dict[key][mix_ids_pairs[:, idx]].values,
+                                    probability_vectors[:, idx]
+                            )
+                        elif len(label_dict[key].shape) == 2:
+                            raise ValueError(
+                                f"Key '{key}' is not specified for one-hot encoding but is 2D.")
+
+        # For string labels, simply take the majority label
+        for str_key in self.string_keys:
+            mixed_labels_dict[str_key] += list(label_dict[str_key][mix_ids_pairs[:, 0]])
+        mixed_labels_dict[str_key] = np.array(mixed_labels_dict[str_key])
 
 
 class DatasetVisualizer:
@@ -1735,6 +1821,8 @@ class GDSCModelCollection:
             axes[i].set_xticks(x)
             axes[i].set_xticklabels(unique_drugs, rotation=45, ha='right')
             axes[i].legend(fontsize=10, bbox_to_anchor=(1., 1), loc='upper left')
+            axes[i].grid(True)
+
         plt.tight_layout()
         plt.savefig(path.join(self.model_base_dir, f"0-{prefix} drugs_overall_performance.png"))
         plt.close()
@@ -2367,13 +2455,13 @@ class GDSCModelCollection:
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-        need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
-        # need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
+        # need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
+        need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
         # need2checktest_keys = set(
         #         [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
         #                                                             37, 438, 30, 1060, 1054, 11,
         #                                                             1498, 1371, 35])
-        #
+
 
         # Initialize containers for storing results across drugs
         for jj, drug_key in enumerate(need2checktest_keys):
@@ -2500,7 +2588,7 @@ class GDSCModelCollection:
 
                     visualize_data_with_meta(
                             aug_features, pd.DataFrame(aug_y_df),
-                            ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
+                            ["TCGA Classification", 'Z score'], if_color_gradient=[False, True],
                             postfix=f"{drug.capitalize()}-Aug{aug_kwargs.get('num2aug')}-train-beta{beta:.1f}", cmap="viridis", figsize=[10, 6], vis_mode="umap",
                             save_dir=self.model_base_dir
                     )
@@ -2688,12 +2776,12 @@ class GDSCModelCollection:
         elif model_name.lower() == "fnn":
             model = Sequential(
                     [
-                            Dense(1024, input_dim=input_shape, activation='selu'),
+                            Dense(64, input_dim=input_shape, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.4),
-                            Dense(128, activation='selu'),
+                            Dropout(0.1),
+                            Dense(32, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.4),
+                            Dropout(0.1),
                             Dense(1)
                             # Use sigmoid for multi-label classification
                     ])

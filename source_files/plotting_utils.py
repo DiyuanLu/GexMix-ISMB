@@ -26,6 +26,7 @@ def retrieve_defined_cancer_colors():
             'COAD': [0.9491873262234066, 0.7460190089556826, 0.9279228626040336],
             'READ': [0.49535022028884557, 0.15953572904945615, 0.8785782300058026],
             'COREAD': [0.9491873262234066, 0.7460190089556826, 0.9279228626040336],
+            'COAD/READ': [0.9491873262234066, 0.7460190089556826, 0.9279228626040336],
             'DLBC': [0.66253516480383, 0.832343435583801, 0.1365078197277426],
             'ESCA': [0.6437950915591677, 0.3949309246005306, 0.6257070560387572],
             'GBM': [0.5968600828236591, 0.5400053312087331, 0.9291057481075607],
@@ -63,6 +64,7 @@ def retrieve_defined_cancer_colors():
             'UNCLASSIFIED': [0.11208716148911235, 0.20817176938970405, 0.5070137030476141],
             'UNABLE TO CLASSIFY': [0.11208716148911235, 0.20817176938970405, 0.5070137030476141],
             '0.0': [0.8219878222602934, 0.21392247955722704, 0.5731005913865741],
+            '0': [0.8219878222602934, 0.21392247955722704, 0.5731005913865741],
     }
     # generated_colors = generate_dark_colors(len(cancer_colors_dict.keys()), dark_factor=0.85)
     # cancer_colors_dict = {key: generated_colors[jj] for jj, key in enumerate(cancer_colors_dict.keys())}
@@ -124,7 +126,7 @@ def get_reduced_dimension_projection(features, vis_mode="pacmap", n_components=2
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
         vis_model = UMAP(
             random_state=66, n_neighbors=n_neighbors, min_dist=umap_params["min_dist"],
-            spread=umap_params["spread"], n_components=n_components, n_jobs=10)
+            spread=umap_params["spread"], n_components=n_components, n_jobs=7)
         projection = vis_model.fit_transform(features)
     elif vis_mode.lower() == "pca":
         from sklearn.decomposition import PCA
@@ -253,10 +255,10 @@ def generate_pastel_colors(num_colors):
 
     return colors
 
-def generate_dark_colors(num_colors, dark_factor=0.5):
+def generate_dark_colors(num_colors, dark_factor=0.75):
     import random
 
-    def get_random_color(dark_factor=0.5, min_value=0.1):
+    def get_random_color(dark_factor=0.75, min_value=0.1):
         # Generate RGB values that are scaled to create dark but not completely black tones
         return [min_value + (x * dark_factor) for x in [random.uniform(0, 1.0) for _ in range(3)]]
 
@@ -264,7 +266,7 @@ def generate_dark_colors(num_colors, dark_factor=0.5):
         # Calculate the Manhattan distance between two colors
         return sum([abs(x[0] - x[1]) for x in zip(c1, c2)])
 
-    def generate_new_color(existing_colors, dark_factor=0.5, min_value=0.1):
+    def generate_new_color(existing_colors, dark_factor=0.75, min_value=0.1):
         max_distance = None
         best_color = None
         for _ in range(100):  # Try 100 times to find a suitable color
@@ -1316,40 +1318,40 @@ def visualize_data_with_meta(features, meta_data_df, meta2check=[], if_color_gra
             # Encode labels for string columns
             encoded_labels, classes = encode_labels(meta_data_df, col)
             color_labels = encoded_labels
-            non_nan_classes = [ele for jj, ele in enumerate(classes) if str(ele) != "nan"]
+            non_nan_classes = [ele for jj, ele in enumerate(classes) if
+                               str(ele) != "nan" and str(ele) != "None"]
         else:
             # Use the column values directly for numeric columns
             color_labels = meta_data_df[col].values
             non_nan_classes = np.unique(color_labels[~np.isnan(color_labels)])
         non_nan_inds = np.where(meta_data_df[col].values.astype(str) != "nan")[0]
-        # Choose colormap: Discrete or Gradient
-        if if_gradient and len(non_nan_classes) < 50:
-
-            class_to_color_dict = retrieve_defined_cancer_colors()
-            # Find unique classes in the figure
-            filtered_class_to_index = {cls: i for i, cls in enumerate(non_nan_classes)}
-            filtered_colors = [class_to_color_dict[cls] for cls in non_nan_classes]
-            discrete_cmap = mcolors.ListedColormap(filtered_colors)
-            # Map class names to numeric indices for plotting
-            color_indices = [filtered_class_to_index.get(cls, -1) for cls in meta_data_df[col]]
-
+        if not if_gradient:  # not continuouse valiues
+            # Choose colormap: Discrete or Gradient
+            if col == "diagnosis":
+                class_to_color_dict = retrieve_defined_cancer_colors()
+                filtered_colors = [class_to_color_dict[cls] for cls in non_nan_classes]
+                class_to_color_df = pd.DataFrame(class_to_color_dict).T
+                class_to_color_df["diagnosis"] = class_to_color_df.index
+                color_labels = encoded_labels
+                new_cmap = mcolors.ListedColormap(filtered_colors)
+            else:
+                generated_colors = generate_dark_colors(len(non_nan_classes), dark_factor=0.75)
+                new_cmap = mcolors.ListedColormap(generated_colors)
         else:
-            discrete_cmap = cmap
-            color_indices = meta_data_df[col]
-
+            new_cmap = cmap
         # Plot all points in gray
         ax.scatter(projection[:, 0], projection[:, 1], color="gray", alpha=0.65, s=5)
         # Plot non-NaN points with color
         sc = ax.scatter(
                 projection[non_nan_inds, 0], projection[non_nan_inds, 1],
-                c=color_indices, cmap=discrete_cmap, s=5)
+                c=np.array(color_labels)[non_nan_inds], cmap=new_cmap, s=5)
         ax.set_title(textwrap.fill(str(col), width=30), fontsize=9)
         ax.set_xticks([])
         ax.set_yticks([])
         # Add colorbar to the current axes
         cbar = fig.colorbar(sc, ax=ax)
         # Set the ticks and labels for the colorbar
-        if is_df_column_string(meta_data_df, col) and if_gradient:
+        if is_df_column_string(meta_data_df, col):
             wrapped_labels = [textwrap.fill(str(label), width=25) for label in non_nan_classes]
             cbar.set_ticks(np.arange(len(non_nan_classes)))
             cbar.set_ticklabels(wrapped_labels, fontsize=8)
