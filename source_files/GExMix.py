@@ -22,7 +22,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from scipy.stats import zscore, spearmanr, pearsonr
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.linear_model import ElasticNet, ElasticNetCV, MultiTaskElasticNetCV, Lasso, \
         LinearRegression, BayesianRidge, TweedieRegressor
 from sklearn.ensemble import RandomForestClassifier
@@ -163,8 +163,14 @@ def get_regression_model_given_name(model_name, input_shape=400, gamma=2.0, alph
             positive=False,
             random_state=899,
             selection="cyclic")
-    elif model_name.lower() == "svm":
-        model = SVC(probability=True, class_weight=class_weight)
+    elif model_name.lower() == "elasticnet":
+        model = ElasticNet(
+                alpha=0.1,
+                l1_ratio=0.5,
+                fit_intercept=True,
+                max_iter=10000,
+                random_state=99,
+                selection="cyclic")
     elif model_name.lower() == "linearregression":
         model = LinearRegression()
     elif model_name.lower() == "xgboost":
@@ -663,6 +669,7 @@ def make_classifiers(tcga_mix: GExMix,
                      overall_results_df: pd.DataFrame,
                      epochs: int,
                      runs: int,
+                     model_names: list,
                      tcga_X_test=None,
                      tcga_y_test=None,
                      train_set_name="GDSC",
@@ -684,12 +691,12 @@ def make_classifiers(tcga_mix: GExMix,
     :param save_dir:
     :return:
     """
-    from sklearn.model_selection import KFold
+
     # Train the model
 
     n_splits = 5
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    model_name = "FNN"
+    # model_name = "FNN"
     # Resample the training set to handle the imbalance
     # ros = SMOTE(random_state=42)
     # X_resampled, y_resampled = ros.fit_resample(X_train, y_train)
@@ -698,125 +705,156 @@ def make_classifiers(tcga_mix: GExMix,
 
     class_count_str = f"{train_set_name}->{test_set_name}"  ## "GDSC+TCGA -> TCGA"
     aug_by_col = "binary_response"
-    for run in range(runs):
-        run_postfix = f"run{run}-{postfix}"
-        gdsc_kf = kf.split(train_val_x)
-        tcga_kf = kf.split(tcga_X_test)
-        for fold_idx, (train_index_gdsc, val_index_gdsc), (train_index_tcga, val_index_tcga) in zip(np.arange(n_splits), gdsc_kf, tcga_kf):
+    for model_name in model_names:
+        for run in range(runs):
+            run_postfix = f"run{run}-{postfix}"
+            gdsc_kf = kf.split(train_val_x)
+            tcga_kf = kf.split(tcga_X_test)
+            for fold_idx, (train_index_gdsc, val_index_gdsc), (train_index_tcga, val_index_tcga) in zip(np.arange(n_splits), gdsc_kf, tcga_kf):
 
-            X_train, X_val = train_val_x.iloc[train_index_gdsc], train_val_x.iloc[val_index_gdsc]
-            y_train, y_val = train_val_y.iloc[train_index_gdsc], train_val_y.iloc[val_index_gdsc]
+                X_train, X_val = train_val_x.iloc[train_index_gdsc], train_val_x.iloc[val_index_gdsc]
+                y_train, y_val = train_val_y.iloc[train_index_gdsc], train_val_y.iloc[val_index_gdsc]
 
-            used_tcga_X_test = tcga_X_test.iloc[val_index_tcga]
-            used_tcga_y_test = tcga_y_test.iloc[val_index_tcga]
+                train_tcga_x = tcga_X_test.iloc[train_index_tcga]
+                train_tcga_y = tcga_y_test.iloc[train_index_tcga]
+                used_tcga_X_test = tcga_X_test.iloc[val_index_tcga]
+                used_tcga_y_test = tcga_y_test.iloc[val_index_tcga]
 
-            # X_train, y_train, used_tcga_X_test, used_val_tcga_y = prepare_train_test_data(
-            #     X_train, y_train, tcga_X_test, tcga_y_test, train_set_name=train_set_name,
-            #     test_set_name=test_set_name)
+                if train_set_name == "GDSC+TCGA" and test_set_name == "TCGA":
+                    X_train = pd.concat([X_train, train_tcga_x], axis=0)
+                    y_train = pd.concat([y_train, train_tcga_y], axis=0)
 
-            # for model_name in ["FNN", "linearregression"]:
-            print(f"{model_name}: {run_postfix} original")
+                elif train_set_name == "TCGA" and test_set_name == "TCGA":
+                    X_train = train_tcga_x.copy()  # overwrite train x, y with the TCGA data
+                    y_train = train_tcga_y.copy()
 
-            overall_results_df, gt_pred_df = train_evaluate_and_log(
-                model_name=model_name,
-                X_train=X_train.values,
-                X_val=X_val.values,
-                y_train_df=y_train,
-                y_val_df=y_val,
-                tcga_X_test=used_tcga_X_test.values,
-                tcga_y_test_df=pd.DataFrame(used_tcga_y_test),
-                num_epochs=epochs,
-                run=run,
-                drug=drug,
-                ori_or_aug="ori",
-                y_target_col=y_target_col,
-                aug_by_col="",
-                save_dir=save_dir,
-                run_postfix=run_postfix,
-                overall_results_df=overall_results_df,
-                title_suffix=f"\n{class_count_str}",
-                regress_or_classify=regress_or_classify
-            )
+                # for model_name in ["FNN", "linearregression"]:
+                print(f"{model_name}: {run_postfix} original")
 
-            # Create a DataFrame to store fold results
-            temp_results = pd.DataFrame(
-                    {
-                            "Drug": [drug] * len(gt_pred_df),
-                            "ori_or_aug": ["ori"] * len(gt_pred_df),
-                            "Run": [run] * len(gt_pred_df),
-                            "Fold": [fold_idx] * len(gt_pred_df)
-                    })
+                overall_results_df, gt_pred_df = train_evaluate_and_log(
+                    model_name=model_name,
+                    X_train=X_train.values,
+                    X_val=X_val.values,
+                    y_train_df=y_train,
+                    y_val_df=y_val,
+                    tcga_X_test=used_tcga_X_test.values,
+                    tcga_y_test_df=pd.DataFrame(used_tcga_y_test),
+                    num_epochs=epochs,
+                    run=run,
+                    drug=drug,
+                    ori_or_aug="ori",
+                    y_target_col=y_target_col,
+                    aug_by_col="",
+                    save_dir=save_dir,
+                    run_postfix=run_postfix+f"-ori-run{run}-cv{fold_idx}-{model_name}",
+                    overall_results_df=overall_results_df,
+                    title_suffix=f"\n{class_count_str}",
+                    regress_or_classify=regress_or_classify
+                )
 
-            # Concatenate with additional meta data
-            fold_drug_results = pd.concat(
-                    [temp_results, gt_pred_df, used_tcga_y_test.reset_index(drop=True)], axis=1)
+                # Create a DataFrame to store fold results
+                temp_results = pd.DataFrame(
+                        {
+                                "Drug": [drug] * len(gt_pred_df),
+                                "ori_or_aug": ["ori"] * len(gt_pred_df),
+                                "Run": [run] * len(gt_pred_df),
+                                "Fold": [fold_idx] * len(gt_pred_df),
+                                "model_name": [model_name] * len(gt_pred_df)
+                        })
 
-            # Append fold results to the list
-            allCV_results.append(fold_drug_results)
+                # Concatenate with additional meta data
+                fold_drug_results = pd.concat(
+                        [temp_results, gt_pred_df, used_tcga_y_test.reset_index(drop=True)], axis=1)
 
-            aug_gex, aug_label_dict = tcga_mix.augment_random(
-                aug_by_col, target_features=X_train.values,
-                target_label_dict=y_train.reset_index(drop=True),
-                keys4mix=["binary_response", "diagnosis", "dataset_name"],
-                    keys4mix_onehot=[],  # doing classification, then use "classification"
-                if_include_original=False, save_dir=save_dir
-            )
-            aug_gex2, aug_label_dict2 = tcga_mix.augment_random(
-                "dataset_name", target_features=X_train.values,
-                target_label_dict=y_train.reset_index(drop=True),
-                keys4mix=["binary_response", "diagnosis", "dataset_name"],
-                    keys4mix_onehot=[],  # doing classification, then use "classification"
-                if_include_original=True, save_dir=save_dir
-            )
-            aug_gex3 = pd.concat([pd.DataFrame(aug_gex), pd.DataFrame(aug_gex2)], axis=0)
-            # Combine by creating lists of values
-            aug_label_dict3 = combine_dicts(aug_label_dict, aug_label_dict2, merge_func=lambda x, y: [x, y])
+                # Append fold results to the list
+                allCV_results.append(fold_drug_results)
 
-            projection = visualize_data_with_meta(
-                    pd.DataFrame(aug_gex3),
-                    pd.DataFrame(aug_label_dict3),
-                    ["binary_response", "diagnosis", "dataset_name"],
-                    postfix=f"{drug}-aug444", if_color_gradient=[True, False, False],
-                    cmap="viridis", figsize=[8, 8], vis_mode="umap",
-                    save_dir=save_dir
-            )
+                if tcga_mix.num2aug > 0:
+                    aug_gex3, aug_label_dict3 = tcga_mix.augment_adding_gaussian_noise(
+                        aug_by_col, target_features=X_train.values,
+                        target_label_dict=y_train.reset_index(drop=True),
+                        keys4mix=["binary_response", "diagnosis", "dataset_name"],
+                            keys4mix_onehot=[],  # doing classification, then use "classification"
+                        if_include_original=True, save_dir=save_dir
+                    )
+                    visualize_data_with_meta(
+                            pd.DataFrame(aug_gex3),
+                            pd.DataFrame(aug_label_dict3),
+                            ["binary_response", "diagnosis", "dataset_name"],
+                            postfix=f"{drug}-Aug-{model_name}-run{run}-cv{fold_idx}",
+                            if_color_gradient=[True, False, False],
+                            cmap="viridis", figsize=[8, 8], vis_mode="umap",
+                            save_dir=save_dir
+                    )
+                else:
+                    aug_gex3 = X_train
+                    aug_label_dict3 = y_train
 
-            print(f"{model_name}: {run_postfix} augment")
-            overall_results_df, gt_pred_df = train_evaluate_and_log(
-                model_name=model_name,
-                X_train=aug_gex3.values,
-                y_train_df=pd.DataFrame(aug_label_dict3),
-                X_val=X_val.values,
-                y_val_df=y_val,
-                tcga_X_test=used_tcga_X_test.values,
-                tcga_y_test_df=pd.DataFrame(used_tcga_y_test),
-                num_epochs=epochs,
-                run=run,
-                drug=drug,
-                ori_or_aug="aug",
-                y_target_col=y_target_col,
-                save_dir=save_dir,
-                title_suffix=f"\n{class_count_str}",
-                run_postfix=run_postfix+f"-augby-{aug_by_col[0:5]}{tcga_mix.num2aug}",
-                overall_results_df=overall_results_df,
-                regress_or_classify=regress_or_classify
-            )
+                # aug_gex, aug_label_dict = tcga_mix.augment_random(
+                #     aug_by_col, target_features=X_train.values,
+                #     target_label_dict=y_train.reset_index(drop=True),
+                #     keys4mix=["binary_response", "diagnosis", "dataset_name"],
+                #         keys4mix_onehot=[],  # doing classification, then use "classification"
+                #     if_include_original=True, save_dir=save_dir
+                # )
+                # aug_gex2, aug_label_dict2 = tcga_mix.augment_random(
+                #     "dataset_name", target_features=X_train.values,
+                #     target_label_dict=y_train.reset_index(drop=True), num2aug=50,
+                #     keys4mix=["binary_response", "diagnosis", "dataset_name"],
+                #         keys4mix_onehot=[],  # doing classification, then use "classification"
+                #     if_include_original=False, save_dir=save_dir
+                # )
+                # aug_gex3 = pd.concat([pd.DataFrame(aug_gex), pd.DataFrame(aug_gex2)], axis=0)
+                # # Combine by creating lists of values
+                # aug_label_dict3 = combine_dicts(aug_label_dict, aug_label_dict2, merge_func=lambda x, y: [x, y])
+                #
+                visualize_data_with_meta(
+                        pd.DataFrame(X_train),
+                        pd.DataFrame(y_train),
+                        ["binary_response", "diagnosis", "dataset_name"],
+                        postfix=f"{drug}-Ori-{model_name}-run{run}-cv{fold_idx}",
+                        if_color_gradient=[True, False, False],
+                        cmap="viridis", figsize=[8, 8], vis_mode="umap",
+                        save_dir=save_dir
+                )
 
-            # Create a DataFrame to store fold results
-            temp_results = pd.DataFrame(
-                    {
-                            "Drug": [drug] * len(gt_pred_df),
-                            "ori_or_aug": ["aug"] * len(gt_pred_df),
-                            "Run":  [run] * len(gt_pred_df),
-                            "Fold": [fold_idx] * len(gt_pred_df)
-                    })
+                print(f"{model_name}: {run_postfix} augment")
+                overall_results_df, gt_pred_df = train_evaluate_and_log(
+                    model_name=model_name,
+                    X_train=aug_gex3,
+                    y_train_df=pd.DataFrame(aug_label_dict3),
+                    X_val=X_val.values,
+                    y_val_df=y_val,
+                    tcga_X_test=used_tcga_X_test.values,
+                    tcga_y_test_df=pd.DataFrame(used_tcga_y_test),
+                    num_epochs=epochs,
+                    run=run,
+                    drug=drug,
+                    ori_or_aug="aug",
+                    y_target_col=y_target_col,
+                    save_dir=save_dir,
+                    title_suffix=f"\n{class_count_str} ",
+                    run_postfix=run_postfix+f"-augby-{aug_by_col[0:5]}{tcga_mix.num2aug}-run{run}-cv{fold_idx}-{model_name}",
+                    overall_results_df=overall_results_df,
+                    regress_or_classify=regress_or_classify
+                )
 
-            # Concatenate with additional meta data
-            fold_drug_results = pd.concat(
-                    [temp_results, gt_pred_df, used_tcga_y_test.reset_index(drop=True)], axis=1)
+                # Create a DataFrame to store fold results
+                temp_results = pd.DataFrame(
+                        {
+                                "Drug": [drug] * len(gt_pred_df),
+                                "ori_or_aug": ["aug"] * len(gt_pred_df),
+                                "Run":  [run] * len(gt_pred_df),
+                                "Fold": [fold_idx] * len(gt_pred_df),
+                                "model_name": [model_name] * len(gt_pred_df)
+                        })
 
-            # Append fold results to the list
-            allCV_results.append(fold_drug_results)
+                # Concatenate with additional meta data
+                fold_drug_results = pd.concat(
+                        [temp_results, gt_pred_df, used_tcga_y_test.reset_index(drop=True)], axis=1)
+
+                # Append fold results to the list
+                allCV_results.append(fold_drug_results)
     # Combine results from all folds into a single DataFrame
     allCV_results_df = pd.concat(allCV_results, ignore_index=True)
 
@@ -937,11 +975,13 @@ def plot_history_train_val(history, title="title", postfix="run_postfix", save_d
 
 def process_data_handle_duplicates(x, y):
     duplicated = y["bcr_drug_barcode"].duplicated()
-    drop_dup_x = x[duplicated]
-    drop_dup_y = y[duplicated]
+
+    drop_dup_x = x[~duplicated]
+    drop_dup_y = y[~duplicated]
     #
     drop_dup_nonan_y = drop_dup_y[drop_dup_y['binary_response'].notnull()]
     drop_dup_nonan_x = drop_dup_x[drop_dup_y['binary_response'].notnull()]
+
     return drop_dup_nonan_x, drop_dup_nonan_y
 
 
@@ -1468,7 +1508,8 @@ def clinical_tcga_investigation(dataset, gexmix, tcga_clinical_filename, save_di
     """
     save_dir_base = "../results/GDSC-RES"
     now_time = datetime.now()
-    time_str = (f"{now_time.month}-{now_time.day}T{now_time.hour}-{now_time.minute}")
+    time_str = (f"{now_time.month}-{now_time.day}T{now_time.hour}-"
+                f"{now_time.minute}-beta{gexmix.beta_param}-num{gexmix.num2aug}-TCGA-TCGA")
     save_dir = path.join(save_dir_base, time_str)
     if not path.exists(save_dir):
         makedirs(save_dir, exist_ok=True)
@@ -1546,10 +1587,10 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
     #                                                                    top_k=top_var_genes)
 
     split_mode = "leave-cell-line-out"
-    num2aug = 500
+    num2aug = 200
     betas = [1]
     y_col = "IC50"  ##"AUC"
-    model_name = "fnn"
+    model_names_list = ["linearregression", "fnn", "elasticnet"]
     timestamp = datetime.now().strftime("%m-%dT%H-%M")
     aug_by_column = "6zscore"## "TCGA Classification" # "3zscore"  # Catgorize zscore into 6 bins, then augment to cover variance in all bins.
 
@@ -1559,11 +1600,12 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
             save_prefix="GDSC",
             load_from_saved_filename=r"..\data\GDSC_drug_response\GDSC_403drugs.pickle")  ## "../data/GDSC_drug_response/random_train403_val403_rand42.pickle"
 
-    for jj, beta in enumerate([0.5, 1, 2]):  # 0.1, 0.5, 1, 2, 4, 5
+    for jj, beta in enumerate([1]):  # 0.1, 0.5, 1, 2, 4, 5
         # beta = betas[0]
+        model_name = model_names_list[0] if len(model_names_list) == 1 else "multiModels"
         model_related_str = f"{model_name}_beta{beta:.1f}" if len(betas) ==1 else "multi-betas"
         # train and save modeled with augmented data
-        model_saved_dir = (f"{save_dir}/models/{split_mode}/{timestamp}_{model_related_str}_Rand_aug{num2aug}")  ## {aug_by_column[0:5]}
+        model_saved_dir = (f"{save_dir}/models/{split_mode}/{timestamp}_{model_related_str}_6z_aug{num2aug}")  ## {aug_by_column[0:5]}
 
         # Create a model collection and train models
         model_collection = GDSCModelCollection(
@@ -1585,15 +1627,16 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
 
         ## train with augmentation of training data
         model_collection.train_and_save_models(
-                drug_grouped_data, model_name, y_col=y_col, gene_start_col=0,
+                drug_grouped_data, model_names_list, y_col=y_col, gene_start_col=0,
                 num2aug=num2aug, use_augmentation=True, betas=[beta],
                 keys4mix=["IC50", "AUC", "Z score", "Tissue", "TCGA Classification"],
                 aug_by_column=aug_by_column, if_verbose_K=first_k_items
         )
+
         ## train first with the original data
         if jj == 0:
             model_collection.train_and_save_models(
-                    drug_grouped_data, model_name,
+                    drug_grouped_data, model_names_list,
                     y_col=y_col, gene_start_col=0, use_augmentation=False, if_verbose_K=first_k_items
             )
 
@@ -1655,16 +1698,18 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
     # gexmix.beta_param = 0.6
     save_dir_base = "../results/GDSC-RES/GDSC-aug-with-TCGA"
     timestamp = datetime.now().strftime("%m-%dT%H-%M")
-    train_set_name = "GDSC+TCGA"
+    train_set_name = "TCGA"
     test_set_name = "TCGA"
     epochs = 50
     runs = 1
-    for train_set_name in ["GDSC+TCGA"]:  # , "GDSC+TCGA"
-        for beta in [0.6, 1, 2]:  # 0.2, 0.65,
-            gexmix.beta_param = beta
-            for num2aug in [50, 100, 200, 400]:
+    model_names = ["FNN", "elasticnet", "linearregression"]
+    for train_set_name in ["GDSC+TCGA", "GDSC"]:  #"TCGA",  , "GDSC+TCGA"
+        for gaussian_scale in [0.1]:  #0.05, 0.1, 0.2 0.2, 0.65,
+            gexmix.beta_param = 1
+            gexmix.gaussian_scale = gaussian_scale
+            for num2aug in [400, 200, 50]:
                 gexmix.num2aug = num2aug
-                time_str = (f"{timestamp}-{train_set_name}_{test_set_name}_beta{beta}_num{num2aug}")
+                time_str = (f"{timestamp}-{train_set_name}_{test_set_name}_noise{gaussian_scale:.2f}_num{num2aug}")
                 save_dir = path.join(save_dir_base, time_str)
                 if not path.exists(save_dir):
                     makedirs(save_dir, exist_ok=True)
@@ -1686,12 +1731,14 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
                 num_genes = tcga_clinical_dataset.num_genes
 
                 # Initialize the model collection
-                model_collection = GDSCModelCollection(gexmix=None)
+
                 mean_metric_sum_df = pd.DataFrame(
-                        columns=["drug", "original_or_augment", "model_name", "accuracy", "run", "num_samples",
+                        columns=["drug", "ori_or_aug", "model_name", "accuracy", "run", "num_samples",
                                  "aug_by_col"])
 
                 for drug_idx, drug_name in enumerate(shared_drugs):
+                    if drug_name != "dabrafenib":
+                        continue
                     print(f"Processing drug: {drug_name}")
                     drug_save_dir = path.join(save_dir, drug_name)
                     if not path.exists(drug_save_dir):
@@ -1699,9 +1746,11 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
 
                     # Step 4: Get data of this drug for GDSC
                     gex_gdsc_x_drug, meta_gdsc_y_drug = gdsc1_dataset.gdsc_extract_data_for_one_drug(
-                        drug_name, tcga_clinical_dataset.gex_all, tcga_clinical_dataset.meta_all, drug_identifier_col="Drug Name")
+                        drug_name, tcga_clinical_dataset.gex_all, tcga_clinical_dataset.meta_all,
+                            drug_identifier_col="Drug Name")
                     meta_gdsc_y_drug["binary_response"] = meta_gdsc_y_drug["Z score"].apply(
                         lambda x: gdsc1_dataset.categorize_zscore_3_class(x))
+
                     meta_gdsc_y_drug["diagnosis"] = meta_gdsc_y_drug["TCGA Classification"]
 
                     # Split the dataframe into train and test sets
@@ -1735,7 +1784,6 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
                             prefix=f"{drug_name}")
 
                     # test the performance for classificaiton + data augmentation
-
                     mean_metric_sum_df, results_w_prediction_gt_df = make_classifiers(
                             gexmix,
                             train_val_x=gex_gdsc_x_drug,
@@ -1748,6 +1796,7 @@ def GDSC_DRP_with_mix_with_TCGA(dataset, gexmix, tcga_clinical_filename):
                             aug_by_col="binary_response",
                             epochs=epochs,
                             runs=runs,
+                            model_names=model_names,
                             y_target_col="binary_response",
                             # aug_by_col and y_target_col don't need to be the same
                             postfix=f"{drug_name}", drug=drug_name,
@@ -2298,8 +2347,8 @@ def analyze_per_drug_tcga_clinical(
             meta_with_clinical_from_tcga, gex_clinical_from_tcga,
             on=["sample_id", "short_sample_id"], how="left", suffixes=('', '_gex')
     )
-    assert num_genes == gex_clinical_from_tcga.shape[1] - 3, "num_genes not correct"
-    for ind in range(0, 100):
+    assert num_genes == gex_clinical_from_tcga.shape[1] - 4, "num_genes not correct"
+    for ind in range(0, 20):
         drug = drug_counts["drug_name"][ind]
         drug_count = drug_counts["total_count"][ind]
         drug_specific_meta_from_clinical = clinical_tcga_valid[
@@ -2317,6 +2366,10 @@ def analyze_per_drug_tcga_clinical(
                 drug_specific_meta_from_clinical, merged_tcga,
                 on="short_sample_id", how='left', suffixes=('', '_gex')
         )
+        ## remove duplicates
+        merged_df2 = merged_df2.groupby("short_sample_id").first().reset_index()
+        # merged_df2.drop("DRUG_NAME", axis=1, inplace=True)  ## the same drug might have different names
+        # filtered_merged_df2 = merged_df2[~merged_df2.duplicated(keep=False)]   ## still duplicates
 
         vis_mode = "umap"
         # Initialize the DatasetVisualizer
@@ -2579,47 +2632,61 @@ def overall_aug_mix_within_TCGA_investigation(aug_mix_col, drug_counts, gexmix, 
     )
 
     # Initialize DataFrame for results
-    results_collect_df = pd.DataFrame(
-        columns=["drug", "original_or_augment", "model_name", "accuracy", "run", "num_samples", "aug_by_col"])
+    mean_metric_sum_df = pd.DataFrame(
+            columns=["drug", "ori_or_aug", "model_name", "accuracy", "run", "num_samples",
+                     "aug_by_col"])
+    # for aug_by_col in aug_mix_col:  # , "binary_response", "primary_therapy_outcome_success"
+    np.random.seed(949)
 
-    for aug_by_col in aug_mix_col:  # , "binary_response", "primary_therapy_outcome_success"
-        np.random.seed(949)
+    ## prepare for ML model training
+    drop_dup_nonan_x, drop_dup_nonan_y = process_data_handle_duplicates(merged_df2.iloc[:, -num_genes:],
+                                                                        merged_df2.iloc[:, 0:-num_genes])
+    check_GDSC_TCGA_col_stats(
+            drop_dup_nonan_y, "binary_response", group_by_col='diagnosis', save_dir=save_dir,
+            prefix=f"{drug}-aug_binary"
+    )
 
-        ## prepare for ML model training
-        drop_dup_nonan_x, drop_dup_nonan_y = process_data_handle_duplicates(merged_df2.iloc[:, -num_genes:],
-                                                                            merged_df2.iloc[:, 0:-num_genes])
-        X_train, df_y_train_dict, class_counts_str, X_test, df_y_test_dict = get_train_val_data(
-                drop_dup_nonan_x, drop_dup_nonan_y)
+    # X_train, df_y_train_dict, class_counts_str, X_test, df_y_test_dict = get_train_val_data(
+    #         drop_dup_nonan_x, drop_dup_nonan_y)
 
-        check_GDSC_TCGA_col_stats(
-            df_y_train_dict, "binary_response", group_by_col='diagnosis', save_dir=save_dir, prefix=f"{drug}-aug_{aug_by_col[0:5]}")
-
-        # Apply the cleaning function to the 'consensus_response' column
-        df_y_train_dict['consensus_response_cleaned'] = df_y_train_dict['consensus_response'].apply(
+    # Apply the cleaning function to the 'consensus_response' column
+    drop_dup_nonan_y['consensus_response_cleaned'] = drop_dup_nonan_y['consensus_response'].apply(
             clean_consensus_response)
 
-        # test the performance for classificaiton + data augmentation
-        results_collect_df = make_classifiers(gexmix,
-                                              train_val_x=X_train,
-                                              train_val_y=df_y_train_dict,
-                                              tcga_X_test=X_test,
-                                              tcga_y_test=df_y_test_dict,
-                                              overall_results_df=results_collect_df,
-                                              aug_by_col=aug_by_col,
-                                              epochs=50,
-                                              y_target_col="binary_response",  # aug_by_col and y_target_col don't need to be the same
-                                              postfix=f"{drug}-aug_{aug_by_col[0:5]}", drug=drug,
-                                              regress_or_classify="regression",
-                                              save_dir=save_dir
-                                              )
+    # test the performance for classificaiton + data augmentation
+    mean_metric_sum_df, results_w_prediction_gt_df = make_classifiers(
+            gexmix,
+            train_val_x=drop_dup_nonan_x,  ### when it is TCGA, this is overwritten
+            train_val_y=drop_dup_nonan_y,  ### when it is TCGA, this is overwritten
+            tcga_X_test=drop_dup_nonan_x,
+            tcga_y_test=drop_dup_nonan_y,
+            overall_results_df=mean_metric_sum_df,
+            aug_by_col="binary_response",
+            epochs=50,
+            runs=1,
+            model_names=["FNN", "linearregression", "elasticnet"],
+            train_set_name="TCGA",
+            test_set_name="TCGA",
+            y_target_col="binary_response",  # aug_by_col and y_target_col don't need to be the same
+            postfix=f"{drug}-aug_binary", drug=drug,
+            regress_or_classify="regression",
+            save_dir=save_dir
+    )
 
-        results_collect_df.to_csv(
-                path.join(
-                        path.dirname(save_dir), f"{timestamp}-augby_{aug_by_col[0:5]}overall_drp_{drug}.csv"
-                )
-        )
-        print("ok")
-        return results_collect_df
+    mean_metric_sum_df.to_csv(
+            path.join(
+                    path.dirname(save_dir),
+                    f"{drug}-overall_drp_summary.csv"
+            )
+    )
+    results_w_prediction_gt_df.to_csv(
+            path.join(
+                    path.dirname(save_dir),
+                    f"{drug}-overall_drp_with_pred_gt_meta.csv"
+            )
+    )
+    print("ok")
+    return results_w_prediction_gt_df
 
 
 def prepare_data_for_DGE_analysis(filenames_2group, meta_base, feature_base, col2match:str):
@@ -3170,7 +3237,7 @@ if __name__ == "__main__":
                             "if_include_original": True,
                             "num2aug": 200,
                             "num2mix": 2,
-                            "beta_param": 2,
+                            "beta_param": 1,
                             "if_use_remix": True,
                             "if_stratify_mix": True,
                     },
@@ -3206,17 +3273,17 @@ if __name__ == "__main__":
     combat_3datasets_mix = mix_objects.get("combat_3")
 
     # # ### Part 1: train with GDSC validation on GDSC
-    # GDSC_DRP_with_mix_with_GDSC(
-    #     combat_3datasets, combat_3datasets_mix,
-    #     save_dir=save_dir)
+    GDSC_DRP_with_mix_with_GDSC(
+        combat_3datasets, combat_3datasets_mix,
+        save_dir=save_dir)
 
     ### Part 2: train with GDSC/GDSC+TCGA validation on GDSC or TCGA
     GDSC_DRP_with_mix_with_TCGA(combat_3datasets, combat_3datasets_mix, filename_dict["TCGA"]["drug_response"])
-    #
-    # ### Part 3: train with TCGA validation on TCGA
-    clinical_tcga_investigation(combat_3datasets, combat_3datasets_mix,
-                                filename_dict["TCGA"]["drug_response"],
-                                save_dir=save_dir)
+    # #
+    # # ### Part 3: train with TCGA validation on TCGA
+    # clinical_tcga_investigation(combat_3datasets, combat_3datasets_mix,
+    #                             filename_dict["TCGA"]["drug_response"],
+    #                             save_dir=save_dir)
     print("ok")
 
 """
