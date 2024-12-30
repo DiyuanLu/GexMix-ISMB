@@ -711,6 +711,7 @@ class GExMix:
 
         mix_ids_pairs = self.generate_balance_indices_for_mixing(
                 pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
+
         # mix_ids_pairs = self.generate_random_indices_for_mixing(
         #         pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
 
@@ -737,6 +738,57 @@ class GExMix:
                 valid_mix_pairs,
                 mixed_labels_dict, valid_probability_vectors, full_feature,
                 target_label_dict, keys4mix=keys4mix, keys4mix_onehot=keys4mix_onehot)
+
+        if if_include_original:
+            mixed_features = np.concatenate((full_feature, mixed_features), axis=0)
+            for key in mixed_labels_dict.keys():
+                mixed_labels_dict[key] = np.concatenate((target_label_dict[key],
+                                                         mixed_labels_dict[key]))
+
+        return mixed_features, mixed_labels_dict
+
+
+    def augment_adding_gaussian_noise(self, aug_by_column: str, target_features=None, gaussian_scale=0.1,
+                       target_label_dict=None, if_stratify=False, num2aug=200, random_state=99,
+                       keys4mix=["tcga_hot_labels", "tumor_percent", "normal_percent"],
+                       keys4mix_onehot=["binary_response"],
+                       if_include_original=True, save_dir="./"):
+        """
+        given a target class, to use either a specific class or random classes to augment it.
+        :param target_features: data array of pure gene expression, no meta
+        :param lables2aug_dict: dict of values need to be augmented, labels should all be one-hot
+        format for mixing
+        :param target_label: int
+        :param num2aug: int
+        :param num2mix: int
+        :return:keys4mix_onehot
+        """
+        full_feature = target_features
+        try:
+            full_feature = target_features.reset_index(drop=True).values
+            target_label_dict = target_label_dict.reset_index(drop=True)
+        except:
+            print("cant reset_index")
+
+        # mix_ids_pairs = self.generate_balance_indices_for_mixing(
+        #         pd.DataFrame(target_label_dict), aug_by_column, num2aug=num2aug)
+        mix_ids_pairs = self.generate_random_indices_for_mixing(
+                pd.DataFrame(target_label_dict), aug_by_column, num2aug=self.num2aug)
+
+        probability_vectors = self.augment_generate_mixing_weights(
+                alpha=self.beta_param, num2aug=len(mix_ids_pairs))
+
+        mixed_labels_dict = self.initialize_aug_label_dict_from_random(
+                target_label_dict, num2aug=self.num2aug, keys4mix=keys4mix)
+
+        mixed_features, mixed_labels_dict = self.update_mixed_features_and_label_dict(
+                mix_ids_pairs, mixed_labels_dict, probability_vectors, full_feature,
+                target_label_dict, keys4mix=keys4mix, keys4mix_onehot=keys4mix_onehot)
+
+        # Add Gaussian noise to the mixed features
+        noise = np.random.normal(0, self.gaussian_scale, mixed_features.shape)
+        mixed_features += noise
+
 
         if if_include_original:
             mixed_features = np.concatenate((full_feature, mixed_features), axis=0)
@@ -984,22 +1036,6 @@ class GExMix:
                         elif len(label_dict[key].shape) == 2:
                             raise ValueError(
                                 f"Key '{key}' is not specified for one-hot encoding but is 2D.")
-        # for idx in range(self.num2mix):
-        #     mixed_features += np.multiply(
-        #             all_feature[mix_ids_pairs[:, idx]],
-        #             probability_vectors[:, idx][:, np.newaxis])
-        #     for key in keys4mix:
-        #         if key in self.array_keys:
-        #             # Create mixed labels using the same mix factors
-        #             if len(label_dict[key].shape) == 2:
-        #                 mixed_labels_dict[key] += np.multiply(
-        #                         label_dict[key][mix_ids_pairs[:, idx]].values,
-        #                         probability_vectors[:, idx][:, np.newaxis])
-        #             elif len(label_dict[key].shape) == 1:
-        #                 print(f"{idx}, {key}")
-        #                 mixed_labels_dict[key] += np.multiply(
-        #                         label_dict[key][mix_ids_pairs[:, idx]].values,
-        #                         probability_vectors[:, idx])
 
         # For string labels, simply take the majority label
         for str_key in self.string_keys:
@@ -1880,10 +1916,10 @@ class GDSCModelCollection:
 
         drug = self.format_drug_name(drug)  # repalce /
 
-        model_path = path.join(
-            self.model_base_dir, f"{ori_or_aug}_{model_name}_No{drug_key}_drug{drug}.pkl")
-
-        self.save_model(model, model_type, model_path)
+        # model_path = path.join(
+        #     self.model_base_dir, f"{ori_or_aug}_{model_name}_No{drug_key}_drug{drug}.pkl")
+        #
+        # self.save_model(model, model_type, model_path)
 
         if val_data_list is not None:
             val_drug, X_val, y_val = val_data_list
@@ -1942,12 +1978,13 @@ class GDSCModelCollection:
                 gt_predict_df, y_val, y_col=y_col, prefix=f"{val_drug.capitalize()}-{ori_or_aug.capitalize()}-{postfix}",
                     corr_str=corr_str, save_dir=self.model_base_dir)
             self.visualize_prediction_gt_ranks(gt_predict_df, y_val,
-                                               y_col="IC50", prefix=f"{val_drug.capitalize()}-{ori_or_aug.capitalize()}-rank-{postfix}",
+                                               y_col="IC50",
+                                               prefix=f"{val_drug.capitalize()}-rank-{ori_or_aug.capitalize()}-{postfix}",
                                                corr_str=corr_str,
                                                save_dir=self.model_base_dir)
 
             return y_val[y_col], val_prediction
-        print(f"Model for No.{drug_key} drug {drug} saved at {model_path}")
+        # print(f"Model for No.{drug_key} drug {drug} saved at {model_path}")
 
     def visualize_prediction_gt(self, gt_predict_df, y_df, y_col="IC50", corr_str="str", prefix="prefix", save_dir="./"):
         """
@@ -2022,8 +2059,8 @@ class GDSCModelCollection:
         predictions_df['abs_rank_error'] = predictions_df['rank_difference'].abs()
 
         # Generate rank-related plots
-        self._plot_rank_difference_histogram(
-            predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
+        # self._plot_rank_difference_histogram(
+        #     predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
         # self._plot_rank_difference(predictions_df, prefix, corr_str=corr_str, save_dir=save_dir)
 
         self._plot_violin_grouped_by_metric(
@@ -2170,7 +2207,7 @@ class GDSCModelCollection:
         """
         Plots scatter comparison of ground truth vs predictions.
         """
-        plt.figure(figsize=(10, 6.8))
+        plt.figure(figsize=(6.5, 5))
         plt.scatter(ground_truth, prediction, alpha=0.7, label="Data Points", color="blue")
         min_val = min(ground_truth.min(), prediction.min())
         max_val = max(ground_truth.max(), prediction.max())
@@ -2180,7 +2217,7 @@ class GDSCModelCollection:
         )
         plt.text(
                 1.03, 0.95, corr_str,
-                transform=plt.gca().transAxes, fontsize=15, verticalalignment='top',
+                transform=plt.gca().transAxes, fontsize=12, verticalalignment='top',
                 bbox=dict(boxstyle="round", facecolor="white", alpha=0.5)
         )
         plt.xlabel(f"Ground Truth {y_col}")
@@ -2424,7 +2461,7 @@ class GDSCModelCollection:
                     gene_start_col=gene_start_col)
         print("ok")
 
-    def train_and_save_models(self, train_val_data_dict, model_name,
+    def train_and_save_models(self, train_val_data_dict, model_names_list,
                               y_col="IC50", gene_start_col=3, betas=[5],
                               use_augmentation=False, if_verbose_K=10,
                               **aug_kwargs):
@@ -2456,11 +2493,11 @@ class GDSCModelCollection:
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
         # need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
-        need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
-        # need2checktest_keys = set(
-        #         [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
-        #                                                             37, 438, 30, 1060, 1054, 11,
-        #                                                             1498, 1371, 35])
+        # need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
+        need2checktest_keys = set(
+                [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
+                                                                    37, 438, 30, 1060, 1054, 11,
+                                                                    1498, 1371, 35])
 
 
         # Initialize containers for storing results across drugs
@@ -2500,51 +2537,54 @@ class GDSCModelCollection:
                 self.if_saved_drug_vis = False
                 allCV_results = []
                 self.coll_history = {}
-                # Perform 5-fold cross-validation with leave cell line out data
-                for fold_idx, (train_idx, val_idx) in enumerate(skf.split(train_val_y_df["cell_line_name"],
-                                                                          train_val_y_df["diagnosis"].values)):
-                # for fold_idx, (train_idx, val_idx) in enumerate(kf.split(np.arange(len(train_val_y_df)))):
-                    print(f"{drug}  Fold {fold_idx + 1}")
-                    fold_drug_results = pd.DataFrame({"Ground Truth": [],
-                                                      "Predictions": [],
-                                                      "Drug": [],
-                                                      "Fold": [],
-                                                     "beta": []})
-                    # Split train and validation data for this fold
-                    train_features = train_val_features.iloc[train_idx].reset_index(drop=True)
-                    train_y_df = train_val_y_df.iloc[train_idx].reset_index(drop=True)
-                    val_features = train_val_features.iloc[val_idx].reset_index(drop=True)
-                    val_y_df = train_val_y_df.iloc[val_idx].reset_index(drop=True)
+                for model_name in model_names_list:
+                    # Perform 5-fold cross-validation with leave cell line out data
+                    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(train_val_y_df["cell_line_name"],
+                                                                              train_val_y_df["diagnosis"].values)):
+                        # for fold_idx, (train_idx, val_idx) in enumerate(kf.split(np.arange(len(train_val_y_df)))):
+                        print(f"{drug} {model_name}  Fold {fold_idx + 1}")
+                        fold_drug_results = pd.DataFrame({"Ground Truth": [],
+                                                          "Predictions": [],
+                                                          "Drug": [],
+                                                          "model_name": [],
+                                                          "Fold": [],
+                                                         "beta": []})
+                        # Split train and validation data for this fold
+                        train_features = train_val_features.iloc[train_idx].reset_index(drop=True)
+                        train_y_df = train_val_y_df.iloc[train_idx].reset_index(drop=True)
+                        val_features = train_val_features.iloc[val_idx].reset_index(drop=True)
+                        val_y_df = train_val_y_df.iloc[val_idx].reset_index(drop=True)
 
-                    # Initialize model only train one model with all the augmented data
-                    model, model_type = self.get_regression_model_given_name(
-                            model_name, input_shape=train_val_features.shape[1])
+                        # Initialize model only train one model with all the augmented data
+                        model, model_type = self.get_regression_model_given_name(
+                                model_name, input_shape=train_val_features.shape[1])
 
-                    augmented_train_datasets = self.get_training_data_with_augmentation(
-                            betas, train_features, train_y_df, drug, gene_start_col,
-                            use_augmentation=use_augmentation, **aug_kwargs)
+                        augmented_train_datasets = self.get_training_data_with_augmentation(
+                                betas, train_features, train_y_df, drug, gene_start_col,
+                                use_augmentation=use_augmentation, **aug_kwargs)
 
-                    for beta, train_x, train_y in augmented_train_datasets:
+                        for beta, train_x, train_y in augmented_train_datasets:
 
-                        # Train and evaluate model
-                        fold_ground_truth, fold_predictions = self.train_and_save_one_model(
-                                model, model_type, drug_key, drug,
-                                train_x, train_y[y_col], model_name,
-                                y_col=y_col, beta=beta, val_data_list=[drug, val_features, val_y_df],
-                                ori_or_aug=ori_or_aug, postfix=f"ID{drug_key}-fold{fold_idx + 1}-beta{beta:.2f}",
-                                gene_start_col=gene_start_col
-                        )
+                            # Train and evaluate model
+                            fold_ground_truth, fold_predictions = self.train_and_save_one_model(
+                                    model, model_type, drug_key, drug,
+                                    train_x, train_y[y_col], model_name,
+                                    y_col=y_col, beta=beta, val_data_list=[drug, val_features, val_y_df],
+                                    ori_or_aug=ori_or_aug, postfix=f"ID{drug_key}-fold{fold_idx + 1}-{model_name[0:3]}",
+                                    gene_start_col=gene_start_col
+                            )
 
-                    # Store fold results
-                    fold_drug_results["Ground Truth"] = fold_ground_truth
-                    fold_drug_results["Predictions"] = fold_predictions
-                    fold_drug_results["Fold"] = [fold_idx + 1] * len(fold_ground_truth)
-                    fold_drug_results["Drug"] = [drug] * len(fold_ground_truth)
-                    fold_drug_results["beta"] = [betas[0]] * len(fold_ground_truth) if len(betas) == 1 else [99] * len(fold_ground_truth)
+                        # Store fold results
+                        fold_drug_results["Ground Truth"] = fold_ground_truth
+                        fold_drug_results["Predictions"] = fold_predictions
+                        fold_drug_results["Fold"] = [fold_idx + 1] * len(fold_ground_truth)
+                        fold_drug_results["Drug"] = [drug] * len(fold_ground_truth)
+                        fold_drug_results["model_name"] = [model_name] * len(fold_ground_truth)
+                        fold_drug_results["beta"] = [betas[0]] * len(fold_ground_truth) if len(betas) == 1 else [99] * len(fold_ground_truth)
 
-                    fold_drug_results = pd.concat([fold_drug_results, val_y_df], axis=1)
+                        fold_drug_results = pd.concat([fold_drug_results, val_y_df], axis=1)
 
-                    allCV_results.append(fold_drug_results)
+                        allCV_results.append(fold_drug_results)
 
                 # Append drug results
                 allCV_results_df = pd.concat(allCV_results, ignore_index=True)
@@ -2553,7 +2593,7 @@ class GDSCModelCollection:
                 allCV_results_df.to_csv(path.join(self.model_base_dir, f"{drug_prefix}FCV-pred-{ori_or_aug}.csv"), index=True)
                 print("Cross-validation results saved to 'cross_validation_results_by_drug.csv'")
             except Exception as e:
-                print(f"Error in processing drug {drug_key}, {drug.capitalize()}: {e}")
+                print(f"Error in processing drug {drug_key}, {model_name}  {drug.capitalize()}: {e}")
 
     def get_training_data_with_augmentation(self, betas, train_features,
                                             train_y_df, drug, gene_start_col,
@@ -2573,6 +2613,8 @@ class GDSCModelCollection:
                     train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_6_class(x))
                 elif "3zscore" == aug_by_column:
                     train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_3_class(x))
+
+                ## augment training data
                 aug_features, aug_y_df = self.augment_data(
                         train_features.iloc[:, gene_start_col:], train_y_df,
                         if_include_original=True, **aug_kwargs
@@ -2761,10 +2803,11 @@ class GDSCModelCollection:
             model_type = "sklearn"
         elif model_name.lower() == "linearregression":
             model = LinearRegression()
-        elif model_name.lower() == "elastic":
+            model_type = "sklearn"
+        elif model_name.lower() == "elasticnet":
             # Initialize Elastic Net with default parameters
             model = ElasticNetCV(
-                    alphas=[0.1, 0.5, 1.0],  # Fewer alpha values to search
+                    alphas=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],  # Fewer alpha values to search
                     l1_ratio=[0.1, 0.5, 0.9],  # Fewer l1_ratio values
                     cv=3,  # Reduced number of folds for faster execution
                     random_state=42
@@ -2776,12 +2819,12 @@ class GDSCModelCollection:
         elif model_name.lower() == "fnn":
             model = Sequential(
                     [
-                            Dense(64, input_dim=input_shape, activation='selu'),
+                            Dense(512, input_dim=input_shape, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.1),
-                            Dense(32, activation='selu'),
+                            Dropout(0.55),
+                            Dense(64, activation='selu'),
                             BatchNormalization(),
-                            Dropout(0.1),
+                            Dropout(0.55),
                             Dense(1)
                             # Use sigmoid for multi-label classification
                     ])
