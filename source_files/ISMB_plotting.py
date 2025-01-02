@@ -266,28 +266,6 @@ def plot_overall_pred_vs_gt_scatter_with_contour(data_dirs):
         #     plt.close()
 
 
-def load_saved_pred_gt_files_old(data_dir, file_patten="No*.csv"):
-    files = glob(path.join(data_dir, file_patten))
-    # Rewriting the process to calculate p-values and generate a volcano plot correctly
-    # Load all ori and aug files
-    ori_files = [file for file in files if 'ori' in file]
-    aug_files = [file for file in files if 'aug' in file]
-    ori_data = []
-    aug_data = []
-    # Process ori files
-    for file in ori_files:
-        data = pd.read_csv(file)
-        data['ori_or_aug'] = 'ori'  # Assign 'ori' for original files
-        ori_data.append(data)
-    # Process aug files
-    for file in aug_files:
-        data = pd.read_csv(file)
-        data['ori_or_aug'] = 'aug'  # Assign 'aug' for augmented files
-        aug_data.append(data)
-
-    return pd.concat(ori_data), pd.concat(aug_data)
-
-
 def compute_metrics(ground_truth, predictions):
     """
     Compute performance metrics between ground truth and predictions.
@@ -437,6 +415,24 @@ def adjust_gt_col_name(case_data):
 
     return gt_col_name, pred_col_name
 
+
+def concat_all_ori_aug_files_in_one_folder(data_dir, file_pattern="No*.csv"):
+    """
+    Concatenate all ori and aug files in a single directory.
+
+    Parameters:
+        data_dir (str): Directory containing prediction files.
+        file_pattern (str): Pattern to match prediction files.
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame for ori data.
+        pd.DataFrame: Concatenated DataFrame for aug data.
+    """
+    ori_data, aug_data = load_saved_pred_gt_files(data_dir, file_pattern=file_pattern)
+
+    raw_data_gt_pred = pd.concat([ori_data, aug_data])
+
+    return raw_data_gt_pred
 def process_metrics_for_each_file_one_folder(data_dir, file_pattern, param_extract_func, extract_label="beta",
                                             if_with_clf_metrics=False, return_raw_data=False, groupby_col=["Drug", "model_name"]):
     """
@@ -461,6 +457,8 @@ def process_metrics_for_each_file_one_folder(data_dir, file_pattern, param_extra
             continue  # Skip if no data available
 
         # Compute metrics grouped by drug and diagnosis
+        if "model_name" not in case_data.columns:
+            case_data["model_name"] = "FNN"
         grouped = case_data.groupby(groupby_col)
         sample_counts = case_data.groupby(groupby_col).size().reset_index(
             name='Sample count'
@@ -468,33 +466,35 @@ def process_metrics_for_each_file_one_folder(data_dir, file_pattern, param_extra
 
         gt_col_name, pred_col_name = adjust_gt_col_name(case_data)
 
-        for (group_keys, group) in grouped:
-            if "model_name" in groupby_col:
-                if "diagnosis" in groupby_col:
-                    drug, diagnosis, model_name = group_keys
-                    sample_count = sample_counts[
-                        (sample_counts['diagnosis'] == diagnosis) & (sample_counts['Drug'] == drug)
-                    ]['Sample count'].values[0]
-                elif "Drug" in groupby_col:
-                    drug, model_name = group_keys
-                    diagnosis = "All"
-                    sample_count = sample_counts[
-                        sample_counts['Drug'] == drug
-                    ]['Sample count'].values[0]
+        for (group_keys, group) in grouped: ## "Drug", "Fold", "model_name"
+            group_keys_dict = dict(zip(groupby_col, group_keys))
+
+            # Extract values dynamically
+            drug = group_keys_dict.get('Drug', None)
+            diagnosis = group_keys_dict.get('diagnosis', 'All')
+            model_name = group_keys_dict.get('model_name', None)
+            fold = group_keys_dict.get('Fold', None)
+            beta = group_keys_dict.get('beta', None)
+
+            # Filter sample count dynamically based on available columns
+            filter_conditions = [
+                    (sample_counts[col] == val) for col, val in group_keys_dict.items() if
+                    col in sample_counts.columns
+            ]
+
+            # Combine filter conditions
+            if filter_conditions:
+                combined_filter = filter_conditions[0]
+                for condition in filter_conditions[1:]:
+                    combined_filter &= condition
+
+                sample_count = sample_counts[combined_filter]['Sample count'].values[0]
             else:
-                if "diagnosis" in groupby_col:
-                    drug, diagnosis = group_keys
-                    model_name = "FNN"
-                    sample_count = sample_counts[
-                        (sample_counts['diagnosis'] == diagnosis) & (sample_counts['Drug'] == drug)
-                        ]['Sample count'].values[0]
-                elif "Drug" in groupby_col and len(groupby_col) == 1:
-                    drug = group_keys
-                    diagnosis = "All"
-                    model_name = "FNN"
-                    sample_count = sample_counts[
-                        sample_counts['Drug'] == drug
-                        ]['Sample count'].values[0]
+                sample_count = 0  # Default to 0 if no matching conditions
+
+            # Use drug, diagnosis, model_name, and sample_count as needed
+            print(
+                f"Drug: {drug}, Diagnosis: {diagnosis}, Model Name: {model_name}, Sample Count: {sample_count}")
 
             filtered_group = group.dropna(subset=[gt_col_name, pred_col_name])
             if len(filtered_group) < 2:  # Skip groups with insufficient data
@@ -511,6 +511,8 @@ def process_metrics_for_each_file_one_folder(data_dir, file_pattern, param_extra
                 "ori_or_aug": case,
                     "model_name": model_name,
                 "Drug": drug,
+                    "Fold": fold,
+                    "beta": beta,
                 "Drug (cancer count)": f"{drug} ({sample_count})",
                 "TCGA Classification": diagnosis,
                 "Diagnosis": diagnosis,
@@ -521,7 +523,7 @@ def process_metrics_for_each_file_one_folder(data_dir, file_pattern, param_extra
         raw_data_gt_pred = pd.concat([ori_data, aug_data])
         return result_data, raw_data_gt_pred
     else:
-        return result_data
+        return result_data, None
 
 
 def load_saved_pred_gt_files(data_dir, file_pattern="No*.csv"):
@@ -541,6 +543,9 @@ def load_saved_pred_gt_files(data_dir, file_pattern="No*.csv"):
         pd.DataFrame: DataFrame for aug data.
     """
     files = glob(path.join(data_dir, file_pattern))
+    # Filter files for ori and aug paired NoID drugs
+    files = filter_ori_and_aug_file_for_NoID_drugs(file_pattern, files)
+
     ori_data = []
     aug_data = []
 
@@ -552,16 +557,40 @@ def load_saved_pred_gt_files(data_dir, file_pattern="No*.csv"):
             aug_data.append(data[data["ori_or_aug"] == "aug"])
         else:
             # Assign ori_or_aug based on file name
-            if 'ori' in file:
+            if 'ori.csv' in file:
                 data['ori_or_aug'] = 'ori'
                 ori_data.append(data)
-            elif 'aug' in file:
+            elif 'aug.csv' in file:
                 data['ori_or_aug'] = 'aug'
                 aug_data.append(data)
 
     ori_data_df = pd.concat(ori_data) if ori_data else None
     aug_data_df = pd.concat(aug_data) if aug_data else None
     return ori_data_df, aug_data_df
+
+
+def filter_ori_and_aug_file_for_NoID_drugs(file_pattern, files):
+    if "No*" in file_pattern:
+        # Extract drugID and categorize files as 'aug' or 'ori'
+        file_map = {}
+        for file in files:
+            base_name = path.basename(file)
+            drug_id = base_name.split('-')[0]
+            file_type = 'aug' if 'aug' in base_name else 'ori' if 'ori' in base_name else None
+            if file_type:
+                file_map.setdefault(drug_id, set()).add(file_type)
+
+        # valid drugs are with both aug and ori files
+        valid_drug_ids = {drug_id for drug_id, types in file_map.items() if
+                          {'aug', 'ori'}.issubset(types)}
+
+        # Filter files for valid drugIDs
+        filtered_files = [file for file in files if
+                          path.basename(file).split('-')[0] in valid_drug_ids]
+    else:
+        filtered_files = files
+    return filtered_files
+
 
 # def compute_metrics(ground_truth, predictions):
 #     """
@@ -1120,7 +1149,7 @@ def compute_CV_mean_summary_statistics(coll_metric_ori_w_aug,
     return coll_metric_ori_w_aug.groupby(groupby).agg(**agg_dict).reset_index()
 
 
-def compute_improvement(summary_stats, metrics=['spearman', 'pearson', 'r2']):
+def compute_improvement(summary_stats, index=['model_name', 'Drug'], metrics=['spearman', 'pearson', 'r2']):
     """
     Compute the improvement of augmented metrics over original metrics.
 
@@ -1132,14 +1161,33 @@ def compute_improvement(summary_stats, metrics=['spearman', 'pearson', 'r2']):
         pd.DataFrame: DataFrame with computed improvements.
     """
     improvement = summary_stats.pivot_table(
-            index='Drug', columns='ori_or_aug',
+            index=index, columns='ori_or_aug',
             values=[f'{metric}' for metric in metrics])
     improvement.columns = ['_'.join(col).strip() for col in improvement.columns.values]
 
+    # for metric in metrics:
+    #     improvement[f'{metric}_improvement'] = improvement[f'{metric}_aug'] - improvement[f'{metric}_ori']
+    #
+    # for metric in metrics:
+    #     improvement[f'{metric}_imprv%'] = (improvement[f'{metric}_aug'] - improvement[f'{metric}_ori'])/improvement[f'{metric}_ori'].abs()
+    # Compute absolute and percentage improvements
     for metric in metrics:
-        improvement[f'{metric}_improvement'] = improvement[f'{metric}_aug'] - improvement[f'{metric}_ori']
+        # Absolute improvement
+        improvement[f'{metric}_improvement'] = improvement[f'{metric}_aug'].fillna(0) - improvement[
+            f'{metric}_ori'].fillna(0)
 
-    improvement['Drug'] = improvement.index
+        # Percentage improvement (handle division by zero)
+        improvement[f'{metric}_imprv%'] = improvement.apply(
+                lambda row: ((row[f'{metric}_aug'] - row[f'{metric}_ori']) / abs(
+                        row[f'{metric}_ori']))
+                if row[f'{metric}_ori'] != 0 else None,
+                axis=1
+        )
+        # Convert to percentage format
+        improvement[f'{metric}_imprv%'] *= 100
+    # improvement['Drug'] = improvement.index
+    # Reset index for easier handling later
+    improvement.reset_index(inplace=True)
     return improvement
 
 
@@ -1147,12 +1195,17 @@ def plot_heatmap(improvement, prefix="", sort_col="spearman_improvement", save_d
     sort_imp = improvement.sort_values(sort_col, ascending=False)
     plt.figure(figsize=(8, 10))
     sns.heatmap(sort_imp[[sort_col]], annot=True, cmap="coolwarm", center=0)
+    # Add a horizontal line at y=0 (relative to the data index position)
+    plt.axhline(
+        y=0.5, color="black", linestyle="--",
+        linewidth=1)  # Adjust y=0.5 to center the line properly
+
     plt.title(f"Heatmap of Improvement (Aug - Ori)\n{prefix}")
     plt.xlabel("Improvement")
     plt.ylabel("Drug")
     plt.tight_layout()
     plt.savefig(path.join(save_dir, f"0-{prefix}-heatmap_improvement_{len(improvement)}drugs.png"))
-    plt.close()
+    # plt.close()
 
 
 def plot_metric_heatmap(model_all_drugs, metric, x_axis="Drug", y_axis="Diagnosis", save_dir="./", prefix=""):
@@ -1204,50 +1257,66 @@ def plot_metric_heatmap(model_all_drugs, metric, x_axis="Drug", y_axis="Diagnosi
     plt.savefig(path.join(save_dir, f"0-{prefix}-heatmap-difference-{metric}.png"))
     plt.close()
 
-def plot_facetgrid(plot_df, sort_improvement_df, prefix="",
+def plot_facetgrid(plot_need_df, sort_improvement_df, prefix="",
                    top=True, selectK=5, plot_metrics=["Accuracy", "F1-Score"],
                    save_dir="./"):
-    rename_hue = {"ori": "Original", "aug": "Augment"}
-    plot_df["ori_or_aug"] = plot_df["ori_or_aug"].map(rename_hue)
+    """
+    Plot a barplot for the top or bottom improved drugs for each metric.
+    :param plot_need_df: averaged in each fold, model, ori_or_aug, and metrics
+    :param sort_improvement_df:
+    :param prefix:
+    :param top:
+    :param selectK:
+    :param plot_metrics:
+    :param save_dir:
+    :return:
+    """
+    if "ori" in plot_need_df["ori_or_aug"].unique():
+        plot_need_df["ori_or_aug"] = plot_need_df["ori_or_aug"].replace(
+                {"ori": "Original", "aug": "Augment"})
+    elif "Original" in plot_need_df["ori_or_aug"].unique():
+        plot_need_df["ori_or_aug"] = plot_need_df["ori_or_aug"].replace(
+                {"Original": "Original", "Augment": "Augment"})
     # Define custom color palette for renamed values
     custom_palette = {
             "Original": 'tab:blue',
             "Augment": 'tab:orange'
     }
-
-    # Rename "ori_or_aug" values for better readability in the legend
-    # plot_df = model_results_df.melt(
-    #         id_vars=["Drug", "ori_or_aug", "Diagnosis", "model_name"],
-    #         value_vars=plot_metrics,
-    #         var_name="metric",
-    #         value_name="score")  ## ['Drug', 'ori_or_aug', 'metric', 'score']
     # Select top or bottom improved drugs
     drugs = sort_improvement_df["Drug"].unique()[:selectK] if top else sort_improvement_df[
                                                                            "Drug"].unique()[
                                                                        -selectK:]
-    subset = plot_df[plot_df["Drug"].isin(drugs)]
+    # plot_df = plot_need_df.melt(
+    #         id_vars=["Drug", "ori_or_aug", "Diagnosis", "model_name"],
+    #         value_vars=plot_metrics,
+    #         var_name="metric",
+    #         value_name="score")  ## ['Drug', 'ori_or_aug', 'metric', 'score']
+    subset = plot_need_df[plot_need_df["Drug"].isin(drugs)]
 
+    unique_classes = subset["Drug"].unique()
     # Create subplots
     fig, axes = plt.subplots(
-        nrows=len(plot_metrics), ncols=1, figsize=(7, max(5, 3.8 * len(plot_metrics))), sharex=True)
-
+            nrows=len(plot_metrics), ncols=1,
+            figsize=(max(7, len(unique_classes) * 0.3), max(5, 3.8 * len(plot_metrics))),
+            sharex=True)
     # Ensure axes is iterable even if there's only one subplot
     if len(plot_metrics) == 1:
         axes = [axes]
-    unique_classes = plot_df["Drug"].unique()
     # Plot each metric
     for ax, metric in zip(axes, plot_metrics):
         for i, cls in enumerate(unique_classes):
             if i % 2 == 0:  # Add alternating gray background shades
                 ax.axvspan(i - 0.5, i + 0.5, color='lightgray', alpha=0.3, zorder=0)
         # metric_data = drug_mean_std_metrics_long[drug_mean_std_metrics_long["metric"] == metric]
+
         sns.barplot(
                 data=subset,
                 x="Drug",
-                y="mean_score",
+                y=metric,
                 hue="ori_or_aug",
                 palette=custom_palette,
                 ax=ax,
+                order=drugs,
                 # ci=None,  # Disable Seaborn's internal confidence interval
                 capsize=0.25,
         )
@@ -1260,7 +1329,13 @@ def plot_facetgrid(plot_df, sort_improvement_df, prefix="",
             ax.legend(loc="upper left", borderaxespad=0.)
         else:
             ax.legend_.remove()
-    plt.xticks(rotation=45, ha="right")
+        xtick_labels = []
+        for i, drug in enumerate(drugs):
+            xtick_labels.append(
+                    f"{drug} (n="
+                    f"{subset[(subset['Drug'] == drug) & (subset['ori_or_aug'] == 'Original')]['Sample count'].sum()})")
+        ax.set_xticklabels(xtick_labels, rotation=45, ha="right")
+    # plt.xticks(rotation=45, ha="right")
     # Adjust layout
     plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for the global title
     plt.savefig(path.join(save_dir, f"0-{prefix}-top{selectK}.png"))
@@ -1432,12 +1507,14 @@ def load_saved_pickle_get_stats_of_one_folder(ori_data_dir, aug_data_dir=None):
         coll_metric_ori_w_aug = convert_metrics_to_dataframe(ori_metrics, aug_metrics)
     return coll_metric_ori_w_aug
 
-def generate_latex_table_with_mean_std_predefined_order(
+def generate_from_overall_latex_table_with_mean_std_predefined_order(
     result_df, metric_columns, groupby_column, table_caption, table_label, metrics_order, only_row_latex=False
 ):
     """
     Generate a LaTeX table dynamically from a DataFrame using mean ± std format for metrics,
-    with a predefined order of metrics.
+    with a predefined order of metrics. Additionally, compute the improvement percentage of the
+    augmented case (Aug) with respect to the original case (Ori).
+
     Parameters:
         result_df (pd.DataFrame): DataFrame containing the results.
         metric_columns (list): List of metric column names to include in the table.
@@ -1445,80 +1522,300 @@ def generate_latex_table_with_mean_std_predefined_order(
         table_caption (str): Caption for the LaTeX table.
         table_label (str): Label for referencing the table in LaTeX.
         metrics_order (list): Predefined order of metrics for the table.
+        only_row_latex (bool): Whether to return only the rows of the table.
+
     Returns:
         str: LaTeX code for the table.
     """
+    # Define the mapping of metrics to their LaTeX equivalents
+    rename_metrics_order = {
+            "Spearman Correlation": r"$\rho_s$",
+            "Pearson Correlation": r"$\rho_p$",
+            "R-squared": r"$R^2$",  # Add other metrics as needed
+            "Accuracy": "Acc.",  # Add other metrics as needed
+            "F1-Score": "F1"  # Add other metrics as needed
+    }
+    # Define the mapping of model names to their shortened forms
+    rename_models = {
+            "linearregression": "LR",
+            "elasticnet": "EN",
+            "fnn": "FNN",  # Add other model names as needed
+            "FNN": "FNN"  # Add other model names as needed
+    }
     # Prepare LaTeX table header
     header = r"""
     \begin{table}[t]
     \centering
     \caption{%s\label{%s}}
     \tabcolsep=0pt%%
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l%s@{\extracolsep{\fill}}}
+    \begin{tabular*}{0.49\textwidth}{@{\extracolsep{\fill}}l%s@{\extracolsep{\fill}}}
     \toprule
-    & \multicolumn{2}{c}{Without DA (Ori)} & \multicolumn{2}{c}{With DA (Aug Case)} \\
-    \cline{2-3}\cline{4-5}
+    & \multicolumn{2}{c}{w/o DA} & \multicolumn{2}{c}{w/ DA} & \multicolumn{2}{c}{Improvement (\%%)} \\
+    \cline{2-3}\cline{4-5}\cline{6-7}
     Models & %s \\
     \midrule
     """ % (
-            table_caption,
-            table_label,
-            "c" * (2 * len(metrics_order)),
-            " & ".join([f"${metric}$" for metric in metrics_order * 2]),
+        table_caption,
+        table_label,
+        "c" * (3 * len(metrics_order)),
+        " & ".join([f"{rename_metrics_order.get(metric, metric)}" for metric in metrics_order * 3]),
     )
+
     # Calculate descriptive statistics
     grouped = result_df.groupby([groupby_column, 'ori_or_aug'])[metric_columns].describe()
+
     # Prepare rows for each group
     rows = []
     for model_name in result_df[groupby_column].unique():
         ori_stats = grouped.loc[(model_name, 'ori')]
         aug_stats = grouped.loc[(model_name, 'aug')]
-        # Handle pd.Series for single groups
-        if isinstance(ori_stats, pd.Series):
-            ori_metrics_str = " & ".join(
-                    [
-                            f"{ori_stats[col, 'mean']:.2f} $\\pm$ {ori_stats[col, 'std']:.2f}"
-                            for col in metrics_order
-                    ]
-            )
-        else:
-            ori_metrics_str = " & ".join(
-                    [
-                            f"{ori_stats.loc[col]['mean']:.2f} $\\pm$ {ori_stats.loc[col]['std']:.2f}"
-                            for col in metrics_order
-                    ]
-            )
-        if isinstance(aug_stats, pd.Series):
-            aug_metrics_str = " & ".join(
-                    [
-                            f"{aug_stats[col, 'mean']:.2f} $\\pm$ {aug_stats[col, 'std']:.2f}"
-                            for col in metrics_order
-                    ]
-            )
-        else:
-            aug_metrics_str = " & ".join(
-                    [
-                            f"{aug_stats.loc[col]['mean']:.2f} $\\pm$ {aug_stats.loc[col]['std']:.2f}"
-                            for col in metrics_order
-                    ]
-            )
-        rows.append(f"{model_name} & {ori_metrics_str} & {aug_metrics_str} \\\\")
+
+        # Compute strings for metrics
+        ori_metrics_str = " & ".join(
+            [
+                f"{ori_stats.loc[col]['mean']:.2f}$\\pm${ori_stats.loc[col]['std']:.2f}"
+                for col in metrics_order
+            ]
+        )
+        aug_metrics_str = " & ".join(
+            [
+                f"{aug_stats.loc[col]['mean']:.2f}$\\pm${aug_stats.loc[col]['std']:.2f}"
+                for col in metrics_order
+            ]
+        )
+
+        # Compute improvement percentages
+        improvement_str = " & ".join(
+            [
+                f"{((aug_stats.loc[col]['mean'] - ori_stats.loc[col]['mean']) / ori_stats.loc[col]['mean'] * 100):.2f}"
+                for col in metrics_order
+            ]
+        )
+
+        # Combine row
+        rows.append(f"{rename_models.get(model_name)} & {ori_metrics_str} & {aug_metrics_str} & {improvement_str} \\\\")
+
     # Combine all rows
     body = "\n".join(rows)
+
     # Prepare LaTeX table footer
     footer = r"""
     \botrule
     \end{tabular*}
     \end{table}
     """
+
     # Combine all parts
     if only_row_latex:
         latex_table = body
     else:
         latex_table = header + body + footer
+
     print(latex_table)
     return latex_table
 
+
+def generate_from_per_drug_latex_table_with_mean_std_predefined_order(
+    drug_wise_improvement_df, metric_columns, groupby_column, table_caption, table_label, metrics_order, only_row_latex=False
+):
+    """
+    Generate a LaTeX table dynamically from a DataFrame using mean ± std format for metrics,
+    with a predefined order of metrics. Additionally, compute the improvement percentage of the
+    augmented case (Aug) with respect to the original case (Ori).
+
+    Parameters:
+        result_df (pd.DataFrame): DataFrame containing the results.
+        metric_columns (list): List of metric column names to include in the table.
+        groupby_column (str): Column to group by for table rows.
+        table_caption (str): Caption for the LaTeX table.
+        table_label (str): Label for referencing the table in LaTeX.
+        metrics_order (list): Predefined order of metrics for the table.
+        only_row_latex (bool): Whether to return only the rows of the table.
+
+    Returns:
+        str: LaTeX code for the table.
+    """
+    # Define the mapping of metrics to their LaTeX equivalents
+    rename_metrics_order = {
+            "Spearman Correlation": r"$\rho_s$",
+            "Pearson Correlation": r"$\rho_p$",
+            "R-squared": r"$R^2$",  # Add other metrics as needed
+            "Accuracy": "Acc.",  # Add other metrics as needed
+            "F1-Score": "F1"  # Add other metrics as needed
+    }
+    # Define the mapping of model names to their shortened forms
+    rename_models = {
+            "linearregression": "LR",
+            "elasticnet": "EN",
+            "fnn": "FNN",  # Add other model names as needed
+            "FNN": "FNN"  # Add other model names as needed
+    }
+    # Prepare LaTeX table header
+    header = r"""
+    \begin{table}[t]
+    \centering
+    \caption{%s\label{%s}}
+    \tabcolsep=0pt%%
+    \begin{tabular*}{0.49\textwidth}{@{\extracolsep{\fill}}l%s@{\extracolsep{\fill}}}
+    \toprule
+    & \multicolumn{2}{c}{w/o DA} & \multicolumn{2}{c}{w/ DA} & \multicolumn{2}{c}{Improvement (\%%)} \\
+    \cline{2-3}\cline{4-5}\cline{6-7}
+    Models & %s \\
+    \midrule
+    """ % (
+        table_caption,
+        table_label,
+        "c" * (3 * len(metrics_order)),
+        " & ".join([f"{rename_metrics_order.get(metric, metric)}" for metric in metrics_order * 3]),
+    )
+
+    # Prepare rows for each model
+    rows = []
+    for model_name in drug_wise_improvement_df['model_name'].unique():
+        model_data = drug_wise_improvement_df[drug_wise_improvement_df['model_name'] == model_name]
+
+        # Extract metrics for ori and aug
+        ori_str = " & ".join(
+            [
+                f"${model_data[f'{metric}_ori'].mean():.2f} \\pm {model_data[f'{metric}_ori'].std():.2f}$"
+                for metric in metrics
+            ]
+        )
+        aug_str = " & ".join(
+            [
+                f"${model_data[f'{metric}_aug'].mean():.2f} \\pm {model_data[f'{metric}_aug'].std():.2f}$"
+                for metric in metrics
+            ]
+        )
+        improvement_str = " & ".join(
+            [
+                f"${model_data[f'{metric}_imprv%'].mean():.2f}$"
+                for metric in metrics
+            ]
+        )
+
+        # Combine row
+        rows.append(f"{rename_models.get(model_name, model_name)} & {ori_str} & {aug_str} & {improvement_str} \\\\")
+
+    # Combine all rows
+    body = "\n".join(rows)
+
+    # Prepare LaTeX table footer
+    footer = r"""
+    \botrule
+    \end{tabular*}
+    \end{table}
+    """
+
+    # Combine all parts
+    if only_row_latex:
+        latex_table = body
+    else:
+        latex_table = header + body + footer
+
+    print(latex_table)
+    return latex_table
+
+
+# def statistical_test_ori_vs_aug(folder_results_df, metrics2check=["Spearman Correlation"], test="t-test"):
+#     """
+#     Perform statistical tests between ori and aug cases for Spearman correlation.
+#
+#     Parameters:
+#     - analysis_results (pd.DataFrame): DataFrame with Spearman correlation results for ori and aug cases.
+#     - test (str): Statistical test to perform ("t-test" or "wilcoxon").
+#
+#     Returns:
+#     - pd.DataFrame: A summary DataFrame with statistical test results for each drug and model_name.
+#     """
+#     # Filter for ori and aug cases
+#
+#     results = []
+#
+#     # Perform statistical test for each drug and model_name
+#     for (drug, model_name), group in folder_results_df.groupby(["Drug", "model_name"]):
+#         if test == "t-test":
+#             stat, p_value = ttest_ind(
+#                     group[group["ori_or_aug"] == "ori"]["Spearman Correlation"],
+#                     group[group["ori_or_aug"] == "aug"]["Spearman Correlation"],
+#                     equal_var=False
+#             )
+#         elif test == "wilcoxon":
+#             # Wilcoxon signed-rank test (requires paired data)
+#             stat, p_value = wilcoxon(
+#                     group[group["ori_or_aug"] == "ori"]["Spearman Correlation"],
+#                     group[group["ori_or_aug"] == "aug"]["Spearman Correlation"]
+#             )
+#         else:
+#             raise ValueError("Unsupported test. Use 't-test' or 'wilcoxon'.")
+#
+#         # Store results
+#         results.append(
+#                 {
+#                         "Drug": drug,
+#                         "Model Name": model_name,
+#                         "mean"
+#                         "Test": test,
+#                         "Statistic": stat,
+#                         "p-value": p_value
+#                 })
+#
+#     return pd.DataFrame(results)
+def statistical_test_ori_vs_aug_multiple_metrics(folder_results_df,
+                                                 metrics=["Spearman Correlation"],
+                                                 stats_tests=["t-test", "wilcoxon"]):
+    """
+    Perform statistical tests between ori and aug cases for multiple metrics.
+
+    Parameters:
+    - folder_results_df (pd.DataFrame): DataFrame with results for ori and aug cases.
+    - metrics (list): List of metric column names to analyze (e.g., ["Spearman Correlation", "Pearson Correlation"]).
+    - test (str): Statistical test to perform ("t-test" or "wilcoxon").
+
+    Returns:
+    - pd.DataFrame: A summary DataFrame with statistical test results for each drug, model_name, and metric.
+    """
+    results = []
+
+    # Iterate over metrics
+    for test in stats_tests:
+        for metric in metrics:
+            # Perform statistical test for each drug and model_name
+            for (drug, model_name), group in folder_results_df.groupby(["Drug", "model_name"]):
+                ori_data = group[group["ori_or_aug"] == "ori"][metric]
+                aug_data = group[group["ori_or_aug"] == "aug"][metric]
+
+                if test == "t-test":
+                    stat, p_value = ttest_ind(ori_data, aug_data, equal_var=False)
+                elif test == "wilcoxon":
+                    if len(ori_data) == len(aug_data):  # Ensure paired data for Wilcoxon
+                        stat, p_value = wilcoxon(ori_data, aug_data)
+                    else:
+                        stat, p_value = float('nan'), float('nan')  # Handle unmatched data sizes
+                else:
+                    raise ValueError("Unsupported test. Use 't-test' or 'wilcoxon'.")
+
+                # Compute mean and std for ori and aug
+                ori_mean, ori_std = ori_data.mean(), ori_data.std()
+                aug_mean, aug_std = aug_data.mean(), aug_data.std()
+
+                # Store results
+                results.append(
+                        {
+                                "Drug": drug,
+                                "model_name": model_name,
+                                "metric": metric,
+                                "stats_test": test,
+                                "ori_mean": ori_mean,
+                                "ori_std": ori_std,
+                                "aug_mean": aug_mean,
+                                "aug_std": aug_std,
+                                "statistic": stat,
+                                "p-value": p_value
+                        }
+                )
+
+    return pd.DataFrame(results)
 
 def load_analyze_plot_metrics_of_one_folder(file_fomat="pickle"):
     """
@@ -1530,77 +1827,116 @@ def load_analyze_plot_metrics_of_one_folder(file_fomat="pickle"):
     """
 
     data_dirs = [
-            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\12-29T12-14_multiModels_beta1.0_Rand_aug500",
-            # r"..\results\GDSC-RES\GDSC-aug-with-TCGA\12-20T23-24-GDSC_TCGA_beta0.6_num50",
+            r"C:\Users\DiyuanLu\Documents\1-Helmholtz-projects\0-active "
+            r"projects\GexMix-ISMB\results\GDSC-RES\models\leave-cell-line-out\01-01T14-05_multiModels_beta2.0_6z_aug400",
 
     ]
-    result_data = []
-    file_pattern = "*with_pred_gt_me*csv"
+
+    file_pattern = "No*csv" #"*pred_gt_meta*csv"  #"No*csv" ## "*pred_gt_meta*csv"  #"No*csv"
     for data_dir in data_dirs:
         folder_str = path.basename(data_dir)
-        extract_label = "Num2aug"
-        # Use a lambda function to extract the beta parameter
-        param_extract_func = lambda data_dir: float(
-                path.basename(data_dir).split('_')[-1].split("num")[-1])
 
-        folder_results_list = process_metrics_for_each_file_one_folder(
-            data_dir, file_pattern,
-            param_extract_func, groupby_col=["Drug", "diagnosis", "model_name"],
-            extract_label=extract_label, return_raw_data=False,
-            if_with_clf_metrics=True)
-        folder_results_df = pd.DataFrame(folder_results_list)
-        folder_results_df.to_csv(path.join(data_dir, f"{folder_str}_drug_wise_all_metrics.csv"), index=False)
+        folder_metrics_file_name = path.join(data_dir, f"0-{folder_str}_all_metrics.csv")
+        raw_pair_response_file_name = path.join(data_dir, f"0-{folder_str}_raw_pairs_w_meta.csv")
+        if path.isfile(folder_metrics_file_name) and path.isfile(raw_pair_response_file_name):
+            folder_results_df = pd.read_csv(folder_metrics_file_name)
+            raw_data_gt_pred = pd.read_csv(raw_pair_response_file_name)
+        else:
+            extract_label = "Num2aug"
+            # Use a lambda function to extract the beta parameter
+            param_extract_func = lambda data_dir: float(
+                    path.basename(data_dir).split('_')[-1].split("aug")[-1])
+
+            folder_results_list, raw_data_gt_pred = process_metrics_for_each_file_one_folder(
+                data_dir, file_pattern,
+                param_extract_func, groupby_col=["Drug", "model_name", "Fold"],
+                extract_label=extract_label, return_raw_data=False,
+                if_with_clf_metrics=True)
+            # raw_data_gt_pred = concat_all_ori_aug_files_in_one_folder(
+            #     data_dir, file_pattern)
+            folder_results_df = pd.DataFrame(folder_results_list)
+            folder_results_df.to_csv(folder_metrics_file_name, index=False)
+            raw_data_gt_pred.to_csv(raw_pair_response_file_name, index=False)
+
+        print(f"%###{data_dir}")
+        generate_from_overall_latex_table_with_mean_std_predefined_order(
+                folder_results_df, metric_columns=["Spearman Correlation", "Pearson Correlation"],
+                # , "Accuracy", "F1-Score"
+                groupby_column="model_name",
+                table_caption=f"{folder_str}Summary of performance metrics with and without data augmentation.",
+                table_label="tab:performance_metrics",
+                metrics_order=["Spearman Correlation", "Pearson Correlation"]
+                ##, "Spearman Correlation", "Pearson Correlation",
+        )
+
+        performance_model_p_values = statistical_test_ori_vs_aug_multiple_metrics(folder_results_df,
+            metrics=["Spearman Correlation", "Pearson Correlation", "F1-Score", "Accuracy"], test="t-test")
+        performance_model_p_values.to_csv(path.join(data_dir,
+                                                    f"0-{folder_str}_{performance_model_p_values['Drug'].nunique()}drugs_ori_aug_p_values.csv"), index=False)
+
+
+        drug_ori_model_mean_stats = compute_CV_mean_summary_statistics(
+                folder_results_df,
+                metrics_cols=['Spearman Correlation', 'Pearson Correlation', 'Accuracy',
+                              'F1-Score'],
+                groupby=["Drug", "ori_or_aug", "Diagnosis", "model_name"])
+        drug_mean_metric_improvement = compute_improvement(
+                drug_ori_model_mean_stats, index=['model_name', 'Drug'],
+                metrics=['mean_spearman', 'mean_pearson', "mean_accuracy", "mean_f1-score"])
+
 
         ## generate latex table of high level metrics
-        generate_latex_table_with_mean_std_predefined_order(
-                folder_results_df, metric_columns=["Spearman Correlation", "Pearson Correlation", "Accuracy", "F1-Score"],
+        generate_from_per_drug_latex_table_with_mean_std_predefined_order(
+                drug_mean_metric_improvement,
+                metric_columns=["Spearman Correlation", "Pearson Correlation"],
+                # , "Accuracy", "F1-Score"
                 groupby_column="model_name",
-                table_caption="Summary of performance metrics with and without data augmentation.",
+                table_caption=f"{folder_str}Summary of performance metrics with and without data augmentation.",
                 table_label="tab:performance_metrics",
-                metrics_order=["Spearman Correlation", "Pearson Correlation", "Accuracy", "F1-Score"]
+                metrics_order=["Spearman Correlation", "Pearson Correlation"]
+                ##, "Spearman Correlation", "Pearson Correlation",
         )
-        """Get mean over all samples of one drug
-        ['Drug', 'ori_or_aug', 'mean_spearman', 'std_spearman',  'mean_pearson',
-           'std_pearson', 'mean_r2', 'std_r2']"""
-        drug_cv_metric_mean_stats = compute_CV_mean_summary_statistics(
-            folder_results_df,
-                metrics_cols=['Spearman Correlation', 'Pearson Correlation', 'Accuracy', 'F1-Score'],
-                groupby=["Drug",  "ori_or_aug", "Diagnosis", "model_name"])
+        uniq_models = folder_results_df["model_name"].unique()
+        for model_name in ["fnn"]:
+            drug_ori_model_fold_mean = folder_results_df[
+                folder_results_df["model_name"].str.lower() == model_name]
 
-        uniq_models = drug_cv_metric_mean_stats["model_name"].unique()
-        for model_name in ["FNN"]:
-            model_all_drugs = drug_cv_metric_mean_stats[
-                drug_cv_metric_mean_stats["model_name"] == model_name]
+            drug_ori_model_mean_stats = compute_CV_mean_summary_statistics(
+                    drug_ori_model_fold_mean,
+                    metrics_cols=['Spearman Correlation', 'Pearson Correlation', 'Accuracy',
+                                  'F1-Score'],
+                    groupby=["Drug", "ori_or_aug", "Diagnosis", "model_name"])
+
             drug_mean_metric_improvement = compute_improvement(
-                    model_all_drugs,
+                    drug_ori_model_mean_stats, index=['model_name', 'Drug'],
                     metrics=['mean_spearman', 'mean_pearson', "mean_accuracy", "mean_f1-score"])
-            # Melt the dataframe for long-form representation for plotting
-            plot_df = model_all_drugs.melt(
-                    id_vars=["Drug", "ori_or_aug", "Diagnosis", "model_name"],
-                    value_vars=["mean_pearson", "mean_spearman", "mean_accuracy", "mean_f1-score"],
-                    var_name="metric", value_name="score")
-            drug_mean_std_metrics_long = plot_df.groupby(
-                    ["Drug", "ori_or_aug", "Diagnosis", "model_name", "metric"]).agg(
-                    mean_score=("score", "mean"),
-                    std_score=("score", "std")
-            ).reset_index()
+            # drug_mean_std_metrics_long = model_all_drugs_mean_std.groupby(
+            #         ["Drug", "ori_or_aug", "model_name", "metric"]).agg(
+            #         mean_score=("score", "mean"),
+            #         std_score=("score", "std")
+            # ).reset_index()
             plot_heatmap(
                     drug_mean_metric_improvement, sort_col="mean_spearman_improvement",
                     prefix=folder_str, save_dir=data_dir)
 
-            plot_metric_heatmap(
-                model_all_drugs, "mean_spearman", x_axis="Drug", y_axis="Diagnosis",
-                    save_dir=data_dir, prefix=folder_str)
-
-            plot_facetgrid(
-                    drug_mean_std_metrics_long, drug_mean_metric_improvement.sort_values(
-                            "mean_spearman_improvement", ascending=False),
-                    top=True, prefix=folder_str + f"{model_name}", selectK=20,
-                    plot_metrics=["mean_spearman", "mean_f1-score"],
-                    save_dir=data_dir)
+            # plot_metric_heatmap(
+            #     model_all_drugs, "mean_spearman", x_axis="Drug", y_axis="Diagnosis",
+            #         save_dir=data_dir, prefix=folder_str)
+            for plot_metrics, sortby_col in zip([['F1-Score'], ["Spearman Correlation"]],
+                                                ["mean_f1-score_improvement",
+                                                 "mean_spearman_improvement"]):
+                for top in [True, False]:
+                    plot_facetgrid(
+                            drug_ori_model_fold_mean, drug_mean_metric_improvement.sort_values(
+                                    sortby_col, ascending=False),
+                            top=top,
+                            prefix=folder_str + f"{model_name}-{'-'.join([ele[0:2] for ele in plot_metrics])}-top{int(top)}",
+                            selectK=15,
+                            plot_metrics=plot_metrics,
+                            save_dir=data_dir)
 
             model_drug_cv_metric_mean_stats = compute_CV_mean_summary_statistics(
-                    model_all_drugs,
+                    drug_ori_model_fold_mean,
                     metrics_cols=["mean_pearson", "mean_spearman", "mean_accuracy",
                                   "mean_f1-score"],
                     groupby=["Drug", "ori_or_aug", "model_name"])
@@ -1612,7 +1948,7 @@ def load_analyze_plot_metrics_of_one_folder(file_fomat="pickle"):
                     model_drug_cv_metric_mean_stats, column="ori_or_aug", prefix=folder_str,
                     value2plot="mean_spearman", save_dir=data_dir)
             ## melt results_df for plotting
-            melt_results_df = model_all_drugs.melt(
+            melt_results_df = drug_ori_model_fold_mean.melt(
                     id_vars=["Drug", "ori_or_aug", "Diagnosis"],
                     value_vars=["mean_pearson", "mean_spearman", "mean_accuracy",
                                 "mean_f1-score"],
@@ -1622,6 +1958,32 @@ def load_analyze_plot_metrics_of_one_folder(file_fomat="pickle"):
                     save_dir=data_dir)
             compute_p_values_paired_metrics(
                 model_drug_cv_metric_mean_stats, metrics_cols=['mean_spearman', 'mean_pearson'])
+
+
+def melt_mean_std_group_drug_ori(model_all_drugs, id_vars=["Drug", "ori_or_aug", "model_name"],
+                    value_vars=["mean_pearson", "mean_spearman", "mean_accuracy", "mean_f1-score"],
+                    var_name="metric", value_name="score"):
+    melted_means = model_all_drugs.melt(
+            id_vars=id_vars,
+            value_vars=value_vars,
+            var_name=var_name, value_name=value_name
+    )
+    # Melt the standard deviations
+    melted_stds = model_all_drugs.melt(
+            id_vars=id_vars,
+            value_vars=[f"std_{ele.split('_')[-1]}" for ele in value_vars],
+            var_name="std_metric", value_name="std_score"
+    )
+    # Replace `std_` prefix in std_metric to align with metric
+    melted_stds["std_metric"] = melted_stds["std_metric"].str.replace("std_", "mean_")
+    # Merge the melted means and stds
+    merged_mean_std = pd.merge(
+            melted_means, melted_stds,
+            left_on=id_vars +[var_name],
+            right_on=id_vars +["std_metric"]
+    ).drop(columns=["std_metric"])
+    return merged_mean_std
+
 
 def plot_boxstripplot_ori_and_aug_overall_drugs(plot_df, metric="mean_pearson", y_col="score",
                                                 prefix="", save_dir="./"):

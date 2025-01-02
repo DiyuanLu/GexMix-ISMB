@@ -1587,12 +1587,12 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
     #                                                                    top_k=top_var_genes)
 
     split_mode = "leave-cell-line-out"
-    num2aug = 200
+    num2aug = 400
     betas = [1]
     y_col = "IC50"  ##"AUC"
     model_names_list = ["linearregression", "fnn", "elasticnet"]
     timestamp = datetime.now().strftime("%m-%dT%H-%M")
-    aug_by_column = "6zscore"## "TCGA Classification" # "3zscore"  # Catgorize zscore into 6 bins, then augment to cover variance in all bins.
+    aug_by_column = "5IC50"## "TCGA Classification" # "3zscore"  # Catgorize zscore into 6 bins, then augment to cover variance in all bins.
 
     drug_grouped_data = gdsc1_dataset.load_gdsc_drug_grouped_data(
             gex_data_all_filtered,
@@ -1600,7 +1600,7 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
             save_prefix="GDSC",
             load_from_saved_filename=r"..\data\GDSC_drug_response\GDSC_403drugs.pickle")  ## "../data/GDSC_drug_response/random_train403_val403_rand42.pickle"
 
-    for jj, beta in enumerate([1]):  # 0.1, 0.5, 1, 2, 4, 5
+    for jj, beta in enumerate([2]):  # 0.1, 0.5, 1, 2, 4, 5
         # beta = betas[0]
         model_name = model_names_list[0] if len(model_names_list) == 1 else "multiModels"
         model_related_str = f"{model_name}_beta{beta:.1f}" if len(betas) ==1 else "multi-betas"
@@ -1611,6 +1611,8 @@ def GDSC_DRP_with_mix_with_GDSC(gdsc_gex_dataset, gexmix, save_dir="./"):
         model_collection = GDSCModelCollection(
             gexmix,
             model_saved_dir)
+
+        copy_save_all_files(model_saved_dir, "./")
 
         # train and save modeled with original data
         first_k_items = 2
@@ -3309,9 +3311,7 @@ Paclitaxel: 11
 Selumetinib: 1498
 PLX-4720: 1371
 NVP-TAE684: 35
-"""
 
-"""
 drugs from CODE-AE
 AZD8055: 1059
 BMS-754807: 184

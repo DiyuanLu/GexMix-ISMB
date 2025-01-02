@@ -1693,6 +1693,54 @@ def categorize_zscore_3_class(zscore):
         return 0 #  (IC50 > 7.39μM )
 
 
+
+# Example function to dynamically categorize IC50 based on Z score thresholds for each drug
+def categorize_IC50_5_class(IC50, thresholds):
+    if IC50 < thresholds[0]:
+        return 4
+    elif thresholds[0] <= IC50 < thresholds[1]:
+        return 3
+    elif thresholds[1] <= IC50 < thresholds[2]:
+        return 2
+    elif thresholds[2] <= IC50 < thresholds[3]:
+        return 1
+    elif thresholds[3] <= IC50:
+        return 0
+    else:
+        return 0
+
+# Define dynamic thresholds for each drug
+def calculate_thresholds(IC50, num_classes=5):
+    # Example: Use percentiles to define dynamic thresholds
+    if num_classes == 5:
+        thresholds = [
+            IC50.quantile(0.2),  # 20th percentile
+            IC50.quantile(0.4),  # 40th percentile
+            IC50.quantile(0.6),  # 60th percentile
+            IC50.quantile(0.8),  # 80th percentile
+        ]
+    elif num_classes == 3:
+        thresholds = [
+            IC50.quantile(0.33),  # 33rd percentile
+            IC50.quantile(0.66),  # 66th percentile
+        ]
+    elif num_classes == 4:
+        thresholds = [
+            IC50.quantile(0.25),  # 25th percentile
+            IC50.quantile(0.5),  # 50th percentile
+            IC50.quantile(0.75),  # 75th percentile
+        ]
+    elif num_classes == 6:
+        thresholds = [
+            IC50.quantile(0.166),  # 16.6th percentile
+            IC50.quantile(0.333),  # 33.3th percentile
+            IC50.quantile(0.5),  # 50th percentile
+            IC50.quantile(0.666),  # 66.6th percentile
+            IC50.quantile(0.833),  # 83.3th percentile
+        ]
+    return thresholds
+
+
 class GDSCModelCollection:
     def __init__(self, gexmix, model_base_dir="models"):
         """
@@ -1706,6 +1754,9 @@ class GDSCModelCollection:
         self.model_base_dir = model_base_dir
 
         makedirs(self.model_base_dir, exist_ok=True)
+        self.vis_save_dir = path.join(self.model_base_dir, "vis")
+        makedirs(self.vis_save_dir, exist_ok=True)
+
 
     def augment_data(self, X, target_label_dict,
                      aug_by_column="TCGA Classification",
@@ -1806,7 +1857,6 @@ class GDSCModelCollection:
         ori_metrics = performance_metrics.get("ori", {})
         aug_metrics = performance_metrics.get("aug", {})
 
-        fig, axes = plt.subplots(len(metrics), 1, figsize=(10, 8), sharex=True)
         ori_or_aug = ""
         for i, metric in enumerate(metrics):
             # Get the original and augmented metrics
@@ -1820,7 +1870,8 @@ class GDSCModelCollection:
             # Group values by drug for averaging and std deviation
             unique_drugs = list(set(ori_drugs + aug_drugs))
             ori_means, ori_stds, aug_means, aug_stds = [], [], [], []
-
+            fig, axes = plt.subplots(
+                len(metrics), 1, figsize=(max(10, 0.5 * len(unique_drugs)), 8), sharex=True)
             for drug in unique_drugs:
                 # Original
                 ori_values = [item[2] for item in ori_values_raw if item[0] == drug]
@@ -1911,8 +1962,16 @@ class GDSCModelCollection:
                 self.coll_history[key].extend(history.history[key])
 
             self.plot_history_train_val(self.coll_history, title=f"{drug.capitalize()} {model_name} Training",
-                                        prefix=f"{drug}_{model_name}_{postfix}",
+                                        prefix=f"{drug}_{model_name}",
                                         save_dir=self.model_base_dir)
+        elif model_name == "elasticnet":
+            # Retrieve the optimal parameters
+            optimal_alpha = model.alpha_
+            optimal_l1_ratio = model.l1_ratio_
+
+            # Print the results
+            print(f"Optimal Alpha: {optimal_alpha}")
+            print(f"Optimal L1 Ratio: {optimal_l1_ratio}")
 
         drug = self.format_drug_name(drug)  # repalce /
 
@@ -1976,12 +2035,12 @@ class GDSCModelCollection:
 
             self.visualize_prediction_gt(
                 gt_predict_df, y_val, y_col=y_col, prefix=f"{val_drug.capitalize()}-{ori_or_aug.capitalize()}-{postfix}",
-                    corr_str=corr_str, save_dir=self.model_base_dir)
+                    corr_str=corr_str, save_dir=self.vis_save_dir)
             self.visualize_prediction_gt_ranks(gt_predict_df, y_val,
                                                y_col="IC50",
                                                prefix=f"{val_drug.capitalize()}-rank-{ori_or_aug.capitalize()}-{postfix}",
                                                corr_str=corr_str,
-                                               save_dir=self.model_base_dir)
+                                               save_dir=self.vis_save_dir)
 
             return y_val[y_col], val_prediction
         # print(f"Model for No.{drug_key} drug {drug} saved at {model_path}")
@@ -2309,6 +2368,9 @@ class GDSCModelCollection:
             #         ha='center', fontsize=8, color='black'
             # )
             xtick_labels.append(f"{group} (n={group_counts[group]})")
+
+        # Explicitly set x-ticks and x-tick labels
+        ax.set_xticks(range(len(xtick_labels)))  # Ensure tick positions match the number of labels
         ax.set_xticklabels(xtick_labels, rotation=45, ha="right")
         plt.text(
                 1.03, 1.0, corr_str,
@@ -2486,18 +2548,28 @@ class GDSCModelCollection:
         30 Sorafenib
         11 Paclitaxel
         133 Doxorubicin
+        1372
+
         """
         # Initialize StratifiedKFold
         n_splits = 5
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-        # need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
+        need2checktest_keys = list(train_val_data_dict.keys()) ##[51, 1373]
+        need2checktest_keys = [446, 1072, 37, 293, 1375] ##[51, 1373]
         # need2checktest_keys = set([30, 11, 1373, 1372, 133]) ##[51, 1373, 1013, 1375, 30, 1005, 11, 1386]
-        need2checktest_keys = set(
-                [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
-                                                                    37, 438, 30, 1060, 1054, 11,
-                                                                    1498, 1371, 35])
+        # need2checktest_keys = set(
+        #         [51, 1373, 299, 1392, 1378, 190, 1372, 194, 431] + [1013, 1026, 6, 119, 1047, 38,
+        #                                                             37, 438, 30, 1060, 1054, 11,
+        #                                                             1498, 1371, 35])
+        # need2checktest_keys = set([194, 431, 51, 1373, 299, 1392, 1378, 190, 30, 11, 133,
+        #                            1013, 1375, 30, 1005, 11, 1386, 37, 1026, 6, 119, 1047 ,
+        #                            38, 37, 438, 30, 1060] +
+        #                            [1054, 11, 1498, 1371, 1059, 184, 1012, 1375, 5, 1375,
+        #                            30, 1013, 1021, 1199, 11, 1386, 1005, 1393, 1129, 1402,
+        #                            1066, 29, 1052, 1192, 202, 1091, 172, 1218, 1030, 1053,
+        #                            1019, 1241, 175, 60, 158])
 
 
         # Initialize containers for storing results across drugs
@@ -2522,18 +2594,18 @@ class GDSCModelCollection:
                 else:
                     train_val_y_df['diagnosis'] = train_val_y_df['diagnosis'].astype(str)
 
-                # self._check_col_stats(
-                #         pd.DataFrame(train_val_y_df), ['IC50'],
-                #         group_by_col='TCGA Classification',
-                #         prefix=f"{drug.capitalize()}-ID{drug_key}-Ori-all",
-                #         save_dir=self.model_base_dir)
-                #
-                # visualize_data_with_meta(
-                #         train_val_features, pd.DataFrame(train_val_y_df),
-                #         ["TCGA Classification", 'Z score'], if_color_gradient=[True, False],
-                #         postfix=f"Ori", cmap="viridis", figsize=[10, 6], vis_mode="umap",
-                #         save_dir=self.model_base_dir
-                # )
+                self._check_col_stats(
+                        pd.DataFrame(train_val_y_df), ['IC50'],
+                        group_by_col='TCGA Classification',
+                        prefix=f"{drug.capitalize()}-ID{drug_key}-Ori-all",
+                        save_dir=self.vis_save_dir)
+
+                visualize_data_with_meta(
+                        train_val_features, pd.DataFrame(train_val_y_df),
+                        ["TCGA Classification", 'Z score'], if_color_gradient=[False, True],
+                        postfix=f"Ori", cmap="viridis", figsize=[10, 6], vis_mode="umap",
+                        save_dir=self.vis_save_dir
+                )
                 self.if_saved_drug_vis = False
                 allCV_results = []
                 self.coll_history = {}
@@ -2570,7 +2642,8 @@ class GDSCModelCollection:
                                     model, model_type, drug_key, drug,
                                     train_x, train_y[y_col], model_name,
                                     y_col=y_col, beta=beta, val_data_list=[drug, val_features, val_y_df],
-                                    ori_or_aug=ori_or_aug, postfix=f"ID{drug_key}-fold{fold_idx + 1}-{model_name[0:3]}",
+                                    ori_or_aug=ori_or_aug,
+                                    postfix=f"ID{drug_key}-fold{fold_idx + 1}-{model_name[0:3].upper()}",
                                     gene_start_col=gene_start_col
                             )
 
@@ -2610,9 +2683,17 @@ class GDSCModelCollection:
                 self.gexmix.beta_param = beta
 
                 if "6zscore" == aug_by_column:
+                    # Apply categorization dynamically for each drug
+                    thresholds_drug = calculate_thresholds(train_y_df["Z score"], num_classes=6)
                     train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_6_class(x))
                 elif "3zscore" == aug_by_column:
                     train_y_df[aug_by_column] = train_y_df["Z score"].apply(lambda x: categorize_zscore_3_class(x))
+                elif "5IC50" == aug_by_column:
+                    # Apply categorization dynamically for each drug
+                    thresholds_drug = calculate_thresholds(train_y_df["IC50"], num_classes=5)
+                    train_y_df[aug_by_column] = train_y_df["IC50"].apply(
+                            lambda IC50: categorize_IC50_5_class(IC50, thresholds_drug)
+                    )
 
                 ## augment training data
                 aug_features, aug_y_df = self.augment_data(
@@ -2626,14 +2707,14 @@ class GDSCModelCollection:
                             pd.DataFrame(aug_y_df), ['IC50'],
                             group_by_col="TCGA Classification", histo_col="IC50",
                             prefix=f"{drug.capitalize()}-Aug-train-beta{beta:.3f}",
-                            save_dir=self.model_base_dir)
+                            save_dir=self.vis_save_dir)
 
-                    visualize_data_with_meta(
-                            aug_features, pd.DataFrame(aug_y_df),
-                            ["TCGA Classification", 'Z score'], if_color_gradient=[False, True],
-                            postfix=f"{drug.capitalize()}-Aug{aug_kwargs.get('num2aug')}-train-beta{beta:.1f}", cmap="viridis", figsize=[10, 6], vis_mode="umap",
-                            save_dir=self.model_base_dir
-                    )
+                    # visualize_data_with_meta(
+                    #         aug_features, pd.DataFrame(aug_y_df),
+                    #         ["TCGA Classification", 'Z score'], if_color_gradient=[False, True],
+                    #         postfix=f"{drug.capitalize()}-Aug{aug_kwargs.get('num2aug')}-train-beta{beta:.1f}", cmap="viridis", figsize=[10, 6], vis_mode="umap",
+                    #         save_dir=self.vis_save_dir
+                    # )
                     self.if_saved_drug_vis = True
         else:
             train_features = train_features.iloc[:, gene_start_col:]
@@ -2660,7 +2741,7 @@ class GDSCModelCollection:
         sns.histplot(data=sorted_grouped, x=histo_col, kde=True, bins=100, ax=axes[0])
         axes[0].set_xlabel(histo_col, fontsize=12)
         axes[0].set_ylabel("Frequency", fontsize=12)
-        axes[0].set_title(f"Histogram of {histo_col}", fontsize=14)
+        axes[0].set_title(f"Histogram of {prefix}-{histo_col}", fontsize=14)
         for i, metric in enumerate(col2check):
             sns.boxplot(
                     data=sorted_grouped,
